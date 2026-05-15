@@ -2,6 +2,7 @@ import { Paperclip, X } from "lucide-react";
 import type { ModelInfo } from "@/types";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { ModelSelector } from "./ModelSelector";
+import { usePasteDetection } from "@/hooks/usePasteDetection";
 
 interface MessageInputProps {
 	onSend: (message: string) => void;
@@ -20,6 +21,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(
 	({ onSend, disabled, modelLabel, models, currentModelId, onModelSelect }, ref) => {
 		const [text, setText] = useState("");
 		const [attachedFiles, setAttachedFiles] = useState<{ path: string; name: string }[]>([]);
+		const { pastedImages, pasteHandler, clearImages } = usePasteDetection();
 		const textareaRef = useRef<HTMLTextAreaElement>(null);
 
 		useImperativeHandle(ref, () => ({
@@ -58,20 +60,24 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(
 			setAttachedFiles((prev) => prev.filter((f) => f.path !== path));
 		}, []);
 
+		const removeImage = useCallback(() => {
+			clearImages();
+		}, [clearImages]);
+
 		async function handleSubmit(e?: React.FormEvent) {
 			e?.preventDefault();
 			const trimmed = text.trim();
-			if ((!trimmed && attachedFiles.length === 0) || disabled) return;
+			if ((!trimmed && attachedFiles.length === 0 && pastedImages.length === 0) || disabled) return;
 
-			// Build prompt with file contents
-			let finalPrompt = "";
-			if (attachedFiles.length > 0) {
-				const fileSections: string[] = [];
-				for (const file of attachedFiles) {
-					fileSections.push(`[File: ${file.path}]`);
-				}
-				finalPrompt = fileSections.join("\n");
+			// Build prompt with file and image references
+			const sections: string[] = [];
+			for (const file of attachedFiles) {
+				sections.push(`[File: ${file.path}]`);
 			}
+			for (const img of pastedImages) {
+				sections.push(`[Image: ${img.dataUrl}]`);
+			}
+			let finalPrompt = sections.join("\n");
 			if (trimmed) {
 				finalPrompt = finalPrompt ? `${finalPrompt}\n\n${trimmed}` : trimmed;
 			}
@@ -79,6 +85,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(
 			onSend(finalPrompt);
 			setText("");
 			setAttachedFiles([]);
+			clearImages();
 			if (textareaRef.current) {
 				textareaRef.current.style.height = "auto";
 			}
@@ -111,11 +118,46 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(
 						value={text}
 						onChange={(e) => setText(e.target.value)}
 						onKeyDown={handleKeyDown}
+						onPaste={(e) => pasteHandler(e.nativeEvent)}
 						placeholder={placeholder}
 						rows={1}
 						disabled={disabled}
 						className="w-full resize-none rounded-t-2xl bg-transparent px-4 pt-3 pb-2 text-foreground placeholder:text-muted-foreground focus:outline-none disabled:opacity-50"
 					/>
+
+					{/* Image preview chips */}
+					{pastedImages.length > 0 && (
+						<div className="flex flex-wrap gap-1.5 px-4 pb-1.5">
+							{pastedImages.map((img) => (
+								<span
+									key={img.name}
+									className="inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-xs max-w-60"
+									style={{
+										background: "hsl(var(--muted))",
+										color: "hsl(var(--foreground))",
+									}}
+									title={img.name}
+								>
+									<img
+										src={img.dataUrl}
+										alt={img.name}
+										className="w-5 h-5 rounded object-cover"
+									/>
+									<span className="truncate">
+										{img.name.length > 30 ? `${img.name.slice(0, 27)}…` : img.name}
+									</span>
+									<button
+										type="button"
+										onClick={removeImage}
+										className="shrink-0 rounded p-0.5 hover:opacity-70"
+										aria-label={`Remove ${img.name}`}
+									>
+										<X size={12} />
+									</button>
+								</span>
+							))}
+						</div>
+					)}
 
 					{/* File chips */}
 					{attachedFiles.length > 0 && (
@@ -171,7 +213,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(
 						</div>
 						<button
 							type="submit"
-							disabled={disabled || (!text.trim() && attachedFiles.length === 0)}
+							disabled={disabled || (!text.trim() && attachedFiles.length === 0 && pastedImages.length === 0)}
 							className="px-4 py-1.5 rounded-lg text-xs font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-90"
 							style={{
 								background: "hsl(var(--primary))",
