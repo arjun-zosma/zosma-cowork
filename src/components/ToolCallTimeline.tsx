@@ -13,6 +13,8 @@
 import type { ToolCallInfo } from "@/types";
 import { AlertCircle, Check, Loader2 } from "lucide-react";
 import { useState } from "react";
+import { useArtifactLoader } from "@/hooks/useArtifactLoader";
+import { ArtifactPreview } from "./ArtifactPreview";
 
 // ─── Main timeline ──────────────────────────────────────────────────
 
@@ -57,6 +59,10 @@ function ToolCallBlock({
 
 	const { header, statusLine } = buildHeader(toolCall);
 
+	// Extract file path for artifact preview after completed write/edit tools
+	const artifactPath = extractWriteFilePath(toolCall);
+	const artifact = useArtifactLoader(artifactPath);
+
 	return (
 		<div
 			className="text-xs font-mono"
@@ -91,6 +97,17 @@ function ToolCallBlock({
 			{showContent && (
 				<div className="px-2 pb-1.5">
 					<ToolContent toolCall={toolCall} />
+				</div>
+			)}
+
+			{/* Artifact preview (shown after completed write/edit tools) */}
+			{artifact && (
+				<div className="px-2 pb-1.5">
+					<ArtifactPreview
+						filePath={artifact.filePath}
+						fileContent={artifact.fileContent}
+						artifactType={artifact.artifactType}
+					/>
 				</div>
 			)}
 		</div>
@@ -545,6 +562,20 @@ export function ToolCallSummary({ toolCalls }: { toolCalls: ToolCallInfo[] }) {
 			)}
 		</span>
 	);
+}
+
+// ─── Extract file path for artifact preview ──────────────────────────
+
+/**
+ * Extract the output file path from a completed write/edit tool call.
+ * Returns null if the tool isn't a write/edit or hasn't completed.
+ */
+function extractWriteFilePath(toolCall: ToolCallInfo): string | null {
+	if (toolCall.status !== "completed") return null;
+	if (toolCall.name !== "write" && toolCall.name !== "edit") return null;
+
+	const path = str(toolCall.args.path) || str(toolCall.args.file_path);
+	return path || null;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────
