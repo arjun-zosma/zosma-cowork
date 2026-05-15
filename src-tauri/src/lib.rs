@@ -561,6 +561,49 @@ async fn search_discover(query: String, s: State<'_, AppState>) -> Result<Value,
     .map(|r| r.get("packages").cloned().unwrap_or(Value::Array(vec![])))
 }
 
+// ── Skills commands ──────────────────────────────────────────────
+
+#[tauri::command]
+async fn search_skills(query: String, s: State<'_, AppState>) -> Result<Value, String> {
+    scmd_r(
+        &s,
+        &serde_json::json!({"type":"search_skills","id":"ssk","query": query}),
+        std::time::Duration::from_secs(35),
+    )
+    .await
+    .map(|r| r.get("results").cloned().unwrap_or(Value::Array(vec![])))
+}
+
+#[tauri::command]
+async fn list_skills(s: State<'_, AppState>) -> Result<Value, String> {
+    scmd_r(
+        &s,
+        &serde_json::json!({"type":"list_skills","id":"lsk"}),
+        std::time::Duration::from_secs(35),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn install_skill(source: String, s: State<'_, AppState>) -> Result<Value, String> {
+    scmd_r(
+        &s,
+        &serde_json::json!({"type":"install_skill","id":"isk","source": source}),
+        std::time::Duration::from_secs(130),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn remove_skill(name: String, s: State<'_, AppState>) -> Result<Value, String> {
+    scmd_r(
+        &s,
+        &serde_json::json!({"type":"remove_skill","id":"rsk","name": name}),
+        std::time::Duration::from_secs(35),
+    )
+    .await
+}
+
 #[tauri::command]
 async fn write_user_file(path: String, content: String) -> Result<(), String> {
     tokio::fs::write(&path, &content)
@@ -693,6 +736,10 @@ pub fn run() {
             set_extension_enabled,
             set_extension_config,
             search_discover,
+            search_skills,
+            list_skills,
+            install_skill,
+            remove_skill,
             write_user_file,
             open_url,
             crate::analytics::track_analytics_event,

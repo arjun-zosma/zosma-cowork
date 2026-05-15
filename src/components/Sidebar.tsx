@@ -16,6 +16,7 @@ import {
 	Package,
 	Palette,
 	Plus,
+	Search,
 	Settings,
 	ShieldCheck,
 	Trash2,
@@ -23,6 +24,7 @@ import {
 import { ExtensionPanel } from "./ExtensionPanel";
 import { PromptTemplates } from "./PromptTemplates";
 import { ProviderAuthSection } from "./ProviderAuthSection";
+import { SkillsPanel } from "./SkillsPanel";
 
 interface Session {
 	id: string;
@@ -62,6 +64,7 @@ export function Sidebar({
 	const isSettings = view === "settings";
 	const isExtensions = view === "extensions";
 	const isTemplates = view === "templates";
+	const isSkills = view === "skills";
 
 	return (
 		<div className="w-64 bg-sidebar border-r border-sidebar-border flex flex-col">
@@ -76,6 +79,8 @@ export function Sidebar({
 				<ExtensionPanel onReload={() => {}} />
 			) : isTemplates && onSend ? (
 				<PromptTemplates onSend={onSend} />
+			) : isSkills ? (
+				<SkillsPanel />
 			) : (
 				<SessionsPanel
 					sessions={sessions}
@@ -105,6 +110,12 @@ export function Sidebar({
 					label="Exts"
 					active={isExtensions}
 					onClick={() => onChangeView("extensions")}
+				/>
+				<TabButton
+					icon={Search}
+					label="Skills"
+					active={isSkills}
+					onClick={() => onChangeView("skills")}
 				/>
 				<TabButton
 					icon={Settings}

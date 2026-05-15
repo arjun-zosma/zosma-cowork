@@ -20,6 +20,7 @@ import {
 	unlinkSync,
 	writeFileSync,
 } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
@@ -201,6 +202,29 @@ interface SearchDiscoverCommand {
 	query: string;
 }
 
+interface SearchSkillsCommand {
+	type: "search_skills";
+	id: string;
+	query: string;
+}
+
+interface ListSkillsCommand {
+	type: "list_skills";
+	id: string;
+}
+
+interface InstallSkillCommand {
+	type: "install_skill";
+	id: string;
+	source: string;
+}
+
+interface RemoveSkillCommand {
+	type: "remove_skill";
+	id: string;
+	name: string;
+}
+
 type Command =
 	| InitCommand
 	| GetModelsCommand
@@ -225,7 +249,11 @@ type Command =
 	| UninstallExtensionCommand
 	| SetExtensionEnabledCommand
 	| SetExtensionConfigCommand
-	| SearchDiscoverCommand;
+	| SearchDiscoverCommand
+	| SearchSkillsCommand
+	| ListSkillsCommand
+	| InstallSkillCommand
+	| RemoveSkillCommand;
 
 // ---------------------------------------------------------------------------
 // Logger (stderr — never interferes with stdout protocol)
@@ -1240,6 +1268,129 @@ async function main() {
 				case "search_discover": {
 					const results = await searchNpmRegistry(cmd.query || "pi extension");
 					send({ type: "result", id: cmd.id, data: { packages: results } });
+					break;
+				}
+
+				// ── skills: search ────────────────────────────────────────────
+				case "search_skills": {
+					try {
+						const query = (cmd as unknown as Record<string, string>).query || "";
+						if (!query.trim()) {
+							send({ type: "result", id: cmd.id, data: { results: [] } });
+							break;
+						}
+						const output = execFileSync("npx", ["skills", "find", query], {
+							encoding: "utf-8",
+							timeout: 30000,
+							maxBuffer: 1024 * 1024,
+						});
+						// Strip ANSI escape codes
+						// Strip ANSI escape codes (ESC + [ + params + letter)
+						const escChar = String.fromCharCode(27); // 0x1b = ESC
+						const chars = output.split("");
+						const result: string[] = [];
+						let skip = 0;
+						for (let i = 0; i < chars.length; i++) {
+							if (skip > 0) {
+								skip--;
+								continue;
+							}
+							if (
+								chars[i] === escChar &&
+								i + 1 < chars.length &&
+								chars[i + 1] === "["
+							) {
+								let j = i + 2;
+								while (j < chars.length && /[0-9;]/.test(chars[j])) {
+									j++;
+								}
+								if (j < chars.length && /[a-zA-Z]/.test(chars[j])) {
+									j++;
+								}
+								skip = j - i - 1;
+								continue;
+							}
+							result.push(chars[i]);
+						}
+						const clean = result.join("");
+						const results: Array<{ id: string; installCount: number; url: string }> = [];
+						const lines = clean.split("\n");
+						for (let i = 0; i < lines.length; i++) {
+							const line = lines[i].trim();
+							// Match lines like "owner/repo@skill-name 1.2K installs"
+							const match = line.match(/^([\w._-]+\/[\w._-]+(?:@[\w._-]+)?)\s+([\d.]+[KMG]?)\s+installs$/);
+							if (match) {
+								const id = match[1];
+								const countStr = match[2];
+								let installCount = 0;
+								if (countStr.endsWith("M")) installCount = Math.round(Number.parseFloat(countStr) * 1_000_000);
+								else if (countStr.endsWith("K")) installCount = Math.round(Number.parseFloat(countStr) * 1_000);
+								else installCount = Number.parseInt(countStr, 10) || 0;
+								// Next line is the URL
+								const urlLine = i + 1 < lines.length ? lines[i + 1].trim() : "";
+								const url = urlLine.startsWith("└")
+									? urlLine.replace(/^└\s*/, "")
+									: `https://skills.sh/${id.replace(/@/g, "/")}`;
+								results.push({ id, installCount, url });
+							}
+						}
+						send({ type: "result", id: cmd.id, data: { results } });
+					} catch (err) {
+						const message = err instanceof Error ? err.message : String(err);
+						log("search_skills error: %s", message);
+						send({ type: "result", id: cmd.id, data: { results: [] } });
+					}
+					break;
+				}
+
+				// ── skills: list installed ───────────────────────────────────
+				case "list_skills": {
+					try {
+						const output = execFileSync("npx", ["skills", "list", "--json"], {
+							encoding: "utf-8",
+							timeout: 30000,
+						});
+						const skills = JSON.parse(output);
+						send({ type: "result", id: cmd.id, data: Array.isArray(skills) ? skills : [] });
+					} catch (err) {
+						const message = err instanceof Error ? err.message : String(err);
+						log("list_skills error: %s", message);
+						send({ type: "result", id: cmd.id, data: [] });
+					}
+					break;
+				}
+
+				// ── skills: install ───────────────────────────────────────────
+				case "install_skill": {
+					try {
+						const source = (cmd as unknown as Record<string, string>).source || "";
+						execFileSync("npx", ["skills", "add", source, "-y", "-g"], {
+							encoding: "utf-8",
+							timeout: 120000,
+						});
+						send({ type: "result", id: cmd.id, data: { success: true } });
+					} catch (err) {
+						const message = err instanceof Error ? err.message : String(err);
+						log("install_skill error: %s", message);
+						send({ type: "error", id: cmd.id, message });
+					}
+					break;
+				}
+
+				// ── skills: remove ────────────────────────────────────────────
+				case "remove_skill": {
+					try {
+						const name = (cmd as unknown as Record<string, string>).name || "";
+						execFileSync("npx", ["skills", "remove", name, "-y"], {
+							encoding: "utf-8",
+							timeout: 30000,
+						});
+						send({ type: "result", id: cmd.id, data: { success: true } });
+					} catch (err) {
+						const message = err instanceof Error ? err.message : String(err);
+						log("remove_skill error: %s", message);
+						send({ type: "error", id: cmd.id, message });
+					}
 					break;
 				}
 
