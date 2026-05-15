@@ -4,7 +4,8 @@ import { mockInvoke, cleanupMocks } from "@/test/mocks";
 
 // Mock the telemetry service
 vi.mock("@/lib/telemetry", () => ({
-	initTelemetry: vi.fn(),
+	initTelemetry: vi.fn().mockResolvedValue(undefined),
+	setSentryDsn: vi.fn(),
 	setTelemetryEnabled: vi.fn(),
 	trackEvent: vi.fn(),
 }));

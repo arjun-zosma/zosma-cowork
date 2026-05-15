@@ -4,13 +4,14 @@
  * Manages telemetry consent state, synchronized with:
  * 1. Rust-side TelemetryState (via set_telemetry_enabled IPC)
  * 2. Settings persistence (via save_settings IPC)
- * 3. Frontend telemetry service gating
+ * 3. Frontend telemetry service gating (Aptabase + Sentry)
  */
 
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useState } from "react";
 import {
 	initTelemetry as initTelemetryService,
+	setSentryDsn,
 	setTelemetryEnabled as setServiceTelemetryEnabled,
 	trackEvent as serviceTrackEvent,
 } from "@/lib/telemetry";
@@ -29,18 +30,24 @@ export function useTelemetry(): UseTelemetryReturn {
 	useEffect(() => {
 		let cancelled = false;
 
+		// Configure Sentry DSN from env (set in CI or .env)
+		const dsn = import.meta.env.VITE_SENTRY_DSN as string | undefined;
+		if (dsn) {
+			setSentryDsn(dsn);
+		}
+
 		invoke<{ telemetry?: { enabled?: boolean } }>("get_settings")
-			.then((settings) => {
+			.then(async (settings) => {
 				if (cancelled) return;
 				const enabled = settings?.telemetry?.enabled ?? false;
 				setIsEnabled(enabled);
-				initTelemetryService(enabled);
+				await initTelemetryService(enabled);
 			})
-			.catch(() => {
+			.catch(async () => {
 				// Settings not available yet — default to disabled
 				if (!cancelled) {
 					setIsEnabled(false);
-					initTelemetryService(false);
+					await initTelemetryService(false);
 				}
 			});
 
