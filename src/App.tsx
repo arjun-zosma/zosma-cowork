@@ -2,6 +2,7 @@ import { ChatView } from "@/chat/ChatView";
 import { HomeView } from "@/components/HomeView";
 import { Sidebar } from "@/components/Sidebar";
 import { TelemetryConsentDialog } from "@/components/TelemetryConsentDialog";
+import { trackEvent } from "@/lib/telemetry";
 import { useAuth } from "@/hooks/useAuth";
 import { usePiStream } from "@/hooks/usePiStream";
 import { useProviders } from "@/hooks/useProviders";
@@ -36,6 +37,11 @@ function App() {
 					setShowTelemetryConsent(true);
 				} else {
 					setShowTelemetryConsent(false);
+				}
+
+				// Track app launch if consent was already enabled
+				if (settings?.telemetry?.enabled) {
+					trackEvent("app_launch");
 				}
 			})
 			.catch(() => {
@@ -248,13 +254,21 @@ function App() {
 					},
 					...prev,
 				]);
+				trackEvent("session_created");
 			}
+
+			// Track message with provider/model info
+			const activeModel = models.find((m) => m.id === activeModelId);
+			trackEvent("message_sent", {
+				provider: activeModel?.provider?.split("-")[0] ?? "unknown",
+				model: activeModel?.id ?? "unknown",
+			});
 
 			// Keep loadedSessionMessages — startStream only produces the new turn.
 			// Merging happens in the stream-complete effect above.
 			startStream(text);
 		},
-		[activeSessionFile, startStream],
+		[activeSessionFile, startStream, models, activeModelId],
 	);
 
 	const handleModelSelect = async (_provider: string, modelId: string) => {
@@ -371,6 +385,7 @@ function App() {
 				<TelemetryConsentDialog
 					onEnable={() => {
 						telemetry.enable();
+						trackEvent("app_launch");
 						setShowTelemetryConsent(false);
 					}}
 					onDismiss={() => {

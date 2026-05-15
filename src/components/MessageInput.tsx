@@ -1,3 +1,4 @@
+import { trackEvent } from "@/lib/telemetry";
 import { Paperclip, X } from "lucide-react";
 import type { ModelInfo } from "@/types";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
@@ -51,6 +52,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(
 					name: p.split("/").pop() ?? p.split("\\").pop() ?? p,
 				}));
 				setAttachedFiles(files);
+				trackEvent("file_picked", { count: files.length });
 			} catch {
 				// Dialog plugin not available (e.g., browser/test env)
 			}
@@ -63,6 +65,13 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(
 		const removeImage = useCallback(() => {
 			clearImages();
 		}, [clearImages]);
+
+		// Track screenshot/detected-image paste events
+		useEffect(() => {
+			if (pastedImages.length > 0) {
+				trackEvent("screenshot_pasted");
+			}
+		}, [pastedImages.length]);
 
 		async function handleSubmit(e?: React.FormEvent) {
 			e?.preventDefault();

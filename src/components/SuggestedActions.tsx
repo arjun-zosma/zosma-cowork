@@ -1,3 +1,4 @@
+import { trackEvent } from "@/lib/telemetry";
 import { FileText, FileSearch, BarChart3, Languages, Code2 } from "lucide-react";
 
 interface Suggestion {
@@ -70,7 +71,10 @@ export function SuggestedActions({ onSend }: SuggestedActionsProps) {
 					<button
 						key={suggestion.title}
 						type="button"
-						onClick={() => onSend(suggestion.prompt)}
+						onClick={() => {
+							trackEvent("suggested_action", { action: suggestion.title });
+							onSend(suggestion.prompt);
+						}}
 						className="flex flex-col items-center gap-2 rounded-xl border p-4 text-center transition-all hover:shadow-md hover:-translate-y-0.5"
 						style={{
 							background: "hsl(var(--card))",

@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { trackEvent } from "@/lib/telemetry";
 import { Clipboard, Download, FolderOpen } from "lucide-react";
 import type { ChatMessage as ChatMessageType } from "@/types";
 import { useState, useCallback } from "react";
@@ -30,6 +31,7 @@ export function ChatMessageItem({ message, detailsExpanded }: ChatMessageProps) 
 			await navigator.clipboard.writeText(text);
 			setCopied(true);
 			setTimeout(() => setCopied(false), 2000);
+			trackEvent("export_action", { type: "copy" });
 		} catch {
 			// fallback
 		}
@@ -54,6 +56,7 @@ export function ChatMessageItem({ message, detailsExpanded }: ChatMessageProps) 
 			if (!path) return;
 			setSaving(true);
 			await invoke("write_user_file", { path, content });
+			trackEvent("export_action", { type: "save" });
 		} catch {
 			// ignore
 		} finally {
@@ -67,6 +70,7 @@ export function ChatMessageItem({ message, detailsExpanded }: ChatMessageProps) 
 			const parentDir = path.substring(0, path.lastIndexOf("/"));
 			if (parentDir) {
 				await invoke("open_url", { url: `file://${parentDir}` });
+				trackEvent("export_action", { type: "open_folder" });
 			}
 		} catch {
 			// ignore
