@@ -5,6 +5,7 @@ import type { ChatMessage as ChatMessageType } from "@/types";
 import { useState, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { FeedbackButtons } from "./FeedbackButtons";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { ToolCallSummary, ToolCallTimeline } from "./ToolCallTimeline";
 
@@ -190,9 +191,11 @@ export function ChatMessageItem({ message, detailsExpanded }: ChatMessageProps) 
 					</div>
 				)}
 
-				{/* Export Actions */}
+				{/* Feedback & Export Actions */}
 				{!isUser && message.content && !message.isStreaming && (
-					<div className="flex items-center gap-1.5 mt-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+					<div className="flex items-center justify-between mt-1.5">
+						<FeedbackButtons />
+						<div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
 						<button
 							type="button"
 							onClick={() => copyToClipboard(message.content)}
@@ -224,6 +227,7 @@ export function ChatMessageItem({ message, detailsExpanded }: ChatMessageProps) 
 							</button>
 						)}
 					</div>
+				</div>
 				)}
 			</div>
 		</div>
