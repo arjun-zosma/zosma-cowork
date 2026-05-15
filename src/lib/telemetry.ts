@@ -62,6 +62,11 @@ export function trackEvent(
 /**
  * Initialize Sentry for crash reporting.
  * Only initializes once regardless of how many times called.
+ *
+ * Note: The `reactErrorHandler` in main.tsx is set up eagerly so React 19
+ * errors are captured from the start. This init call enables the actual
+ * data transmission. The `@sentry/react` module is shared via Vite's
+ * module cache (static import in main.tsx + dynamic import here).
  */
 async function initSentry(): Promise<void> {
 	if (sentryInitialized) return;
@@ -69,11 +74,13 @@ async function initSentry(): Promise<void> {
 	try {
 		if (!sentryDsn) return;
 
-		const Sentry = await import("@sentry/browser");
+		const Sentry = await import("@sentry/react");
 
 		Sentry.init({
 			dsn: sentryDsn,
-			// Minimal footprint — no replay, no performance
+			// Anonymous-by-design — no PII, no user IDs, no cookies
+			sendDefaultPii: false,
+			// Minimal footprint — crash reporting only
 			replaysSessionSampleRate: 0,
 			replaysOnErrorSampleRate: 0,
 			tracesSampleRate: 0,

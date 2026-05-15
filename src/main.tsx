@@ -1,5 +1,6 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { reactErrorHandler } from "@sentry/react";
 import "./App.css";
 import App from "./App";
 import { applyTheme, getSavedTheme } from "./lib/themes";
@@ -9,7 +10,11 @@ applyTheme(getSavedTheme());
 
 const rootElement = document.getElementById("root");
 if (!rootElement) throw new Error("Root element not found");
-createRoot(rootElement).render(
+createRoot(rootElement, {
+	onUncaughtError: reactErrorHandler(),
+	onCaughtError: reactErrorHandler(),
+	onRecoverableError: reactErrorHandler(),
+}).render(
 	<StrictMode>
 		<App />
 	</StrictMode>,

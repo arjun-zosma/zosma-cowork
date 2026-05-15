@@ -5,10 +5,12 @@ vi.mock("@aptabase/tauri", () => ({
 	trackEvent: vi.fn().mockResolvedValue(undefined),
 }));
 
-// Mock @sentry/browser before importing
+// Mock @sentry/react before importing
+// @sentry/react re-exports from @sentry/browser, so we mock the entry point used by telemetry.ts
 const mockSentryInit = vi.fn();
-vi.mock("@sentry/browser", () => ({
+vi.mock("@sentry/react", () => ({
 	init: mockSentryInit,
+	reactErrorHandler: vi.fn(() => vi.fn()),
 }));
 
 const aptabase = await import("@aptabase/tauri");
