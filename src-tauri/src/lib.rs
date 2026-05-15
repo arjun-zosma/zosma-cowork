@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -25,6 +26,10 @@ struct PendingPrompt {
 }
 struct PendingRequest {
     sender: oneshot::Sender<Result<Value, String>>,
+}
+
+struct TelemetryState {
+    enabled: Arc<AtomicBool>,
 }
 
 #[derive(Default)]
@@ -577,6 +582,16 @@ async fn open_url(url: String) -> Result<(), String> {
     Ok(())
 }
 
+// ── Telemetry ────────────────────────────────────────────────
+
+#[tauri::command]
+async fn set_telemetry_enabled(enabled: bool, app: AppHandle) -> Result<(), String> {
+    let state = app.state::<TelemetryState>();
+    state.enabled.store(enabled, Ordering::Release);
+    log::info!("Telemetry: {}", if enabled { "enabled" } else { "disabled" });
+    Ok(())
+}
+
 fn uuid_v4() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let n = SystemTime::now()
@@ -594,11 +609,27 @@ fn uuid_v4() -> String {
 }
 
 pub fn run() {
-    tauri::Builder::default()
+    let aptabase_key = option_env!("APTABASE_KEY").unwrap_or("");
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_dialog::init());
+
+    #[allow(unused_mut)]
+    let mut builder = builder;
+
+    // Only register the Aptabase plugin if a key is available at compile time.
+    if !aptabase_key.is_empty() {
+        builder = builder.plugin(
+            tauri_plugin_aptabase::Builder::new(aptabase_key).build(),
+        );
+    }
+
+    builder
+        .manage(TelemetryState {
+            enabled: Arc::new(AtomicBool::new(false)),
+        })
         .setup(|app| {
             let h = app.handle().clone();
             let st: AppState = AppState::default();
@@ -652,6 +683,7 @@ pub fn run() {
             search_discover,
             write_user_file,
             open_url,
+            set_telemetry_enabled,
         ])
         .run(tauri::generate_context!())
         .expect("error running tauri");

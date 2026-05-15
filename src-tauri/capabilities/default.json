@@ -11,6 +11,7 @@
     "notification:default",
     "fs:default",
     "dialog:default",
+    "aptabase:allow-track-event",
     { "identifier": "fs:allow-read-text-file", "allow": [{ "path": "$HOME/.zosmaai/cowork/**" }] },
     { "identifier": "fs:allow-write-text-file", "allow": [{ "path": "$HOME/.zosmaai/cowork/**" }] },
     { "identifier": "fs:allow-read-dir", "allow": [{ "path": "$HOME/.zosmaai/cowork/**" }] },

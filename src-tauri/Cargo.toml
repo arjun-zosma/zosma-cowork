@@ -25,3 +25,4 @@ tauri-plugin-shell = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-dialog = "2.7.1"
+tauri-plugin-aptabase = { git = "https://github.com/aptabase/tauri-plugin-aptabase.git" }
