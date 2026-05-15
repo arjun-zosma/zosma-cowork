@@ -588,7 +588,10 @@ async fn open_url(url: String) -> Result<(), String> {
 async fn set_telemetry_enabled(enabled: bool, app: AppHandle) -> Result<(), String> {
     let state = app.state::<TelemetryState>();
     state.enabled.store(enabled, Ordering::Release);
-    log::info!("Telemetry: {}", if enabled { "enabled" } else { "disabled" });
+    log::info!(
+        "Telemetry: {}",
+        if enabled { "enabled" } else { "disabled" }
+    );
     Ok(())
 }
 
@@ -621,9 +624,7 @@ pub fn run() {
 
     // Only register the Aptabase plugin if a key is available at compile time.
     if !aptabase_key.is_empty() {
-        builder = builder.plugin(
-            tauri_plugin_aptabase::Builder::new(aptabase_key).build(),
-        );
+        builder = builder.plugin(tauri_plugin_aptabase::Builder::new(aptabase_key).build());
     }
 
     builder
