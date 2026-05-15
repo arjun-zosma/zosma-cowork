@@ -11,6 +11,7 @@
  */
 
 import type { ToolCallInfo } from "@/types";
+import { invoke } from "@tauri-apps/api/core";
 import { AlertCircle, Check, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { useArtifactLoader } from "@/hooks/useArtifactLoader";
@@ -107,6 +108,12 @@ function ToolCallBlock({
 						filePath={artifact.filePath}
 						fileContent={artifact.fileContent}
 						artifactType={artifact.artifactType}
+						onOpenFolder={(dir) => {
+							invoke("open_url", { url: `file://${dir}` }).catch(() => {});
+						}}
+						onCopyPath={(path) => {
+							navigator.clipboard.writeText(path).catch(() => {});
+						}}
 					/>
 				</div>
 			)}
