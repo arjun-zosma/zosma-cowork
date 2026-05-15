@@ -21,7 +21,6 @@ static DEFAULT_FLUSH_INTERVAL: Duration = Duration::from_secs(60);
 static HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 static INGEST_URL: &str = "https://in.aptabase.com/v1/event";
 
-
 /// Thread-safe internal queue of pending events.
 struct EventQueue {
     inner: RwLock<VecDeque<Value>>,
