@@ -417,6 +417,7 @@ function App() {
 							telemetry.disable();
 						}
 					}}
+					onSend={handleSend}
 				/>
 			)}
 

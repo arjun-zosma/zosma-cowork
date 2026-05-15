@@ -12,6 +12,7 @@ import {
 	Info,
 	Key,
 	MessageSquare,
+	NotebookPen,
 	Package,
 	Palette,
 	Plus,
@@ -20,6 +21,7 @@ import {
 	Trash2,
 } from "lucide-react";
 import { ExtensionPanel } from "./ExtensionPanel";
+import { PromptTemplates } from "./PromptTemplates";
 import { ProviderAuthSection } from "./ProviderAuthSection";
 
 interface Session {
@@ -41,6 +43,7 @@ interface SidebarProps {
 	onShowKeyEntry?: () => void;
 	telemetryEnabled?: boolean;
 	onTelemetryToggle?: (enabled: boolean) => void;
+	onSend?: (prompt: string) => void;
 }
 
 export function Sidebar({
@@ -54,9 +57,11 @@ export function Sidebar({
 	onShowKeyEntry,
 	telemetryEnabled,
 	onTelemetryToggle,
+	onSend,
 }: SidebarProps) {
 	const isSettings = view === "settings";
 	const isExtensions = view === "extensions";
+	const isTemplates = view === "templates";
 
 	return (
 		<div className="w-64 bg-sidebar border-r border-sidebar-border flex flex-col">
@@ -69,6 +74,8 @@ export function Sidebar({
 				/>
 			) : isExtensions ? (
 				<ExtensionPanel onReload={() => {}} />
+			) : isTemplates && onSend ? (
+				<PromptTemplates onSend={onSend} />
 			) : (
 				<SessionsPanel
 					sessions={sessions}
@@ -86,6 +93,12 @@ export function Sidebar({
 					label="Chats"
 					active={view === "chats"}
 					onClick={() => onChangeView("chats")}
+				/>
+				<TabButton
+					icon={NotebookPen}
+					label="Templates"
+					active={isTemplates}
+					onClick={() => onChangeView("templates")}
 				/>
 				<TabButton
 					icon={Package}
