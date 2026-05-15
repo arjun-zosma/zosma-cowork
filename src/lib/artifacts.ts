@@ -23,9 +23,10 @@ export function extractFilePaths(result: string): string[] {
 	// Match "Written to <path>" or "Written N lines to <path>"
 	// Capture path up to optional parenthesized metadata
 	const writtenRegex = /Written\s+(?:\d+\s+lines\s+)?to\s+(.+?)(?:\s+\(|$)/g;
-	let match;
-	while ((match = writtenRegex.exec(result)) !== null) {
-		const path = match[1].trim();
+	let writtenMatch: RegExpExecArray | null;
+	// biome-ignore lint/suspicious/noAssignInExpressions: regex exec loop pattern
+	while ((writtenMatch = writtenRegex.exec(result)) !== null) {
+		const path = writtenMatch[1].trim();
 		if (!paths.includes(path)) {
 			paths.push(path);
 		}
@@ -33,8 +34,10 @@ export function extractFilePaths(result: string): string[] {
 
 	// Match diff headers: "--- a/<path>" and "+++ b/<path>"
 	const diffRegex = /^(?:---\s+a\/|\+\+\+\s+b\/)(.+)$/gm;
-	while ((match = diffRegex.exec(result)) !== null) {
-		const path = match[1].trim();
+	let diffMatch: RegExpExecArray | null;
+	// biome-ignore lint/suspicious/noAssignInExpressions: regex exec loop pattern
+	while ((diffMatch = diffRegex.exec(result)) !== null) {
+		const path = diffMatch[1].trim();
 		if (!paths.includes(path)) {
 			paths.push(path);
 		}
