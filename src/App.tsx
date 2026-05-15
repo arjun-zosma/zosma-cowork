@@ -1,9 +1,11 @@
 import { ChatView } from "@/chat/ChatView";
 import { HomeView } from "@/components/HomeView";
 import { Sidebar } from "@/components/Sidebar";
+import { TelemetryConsentDialog } from "@/components/TelemetryConsentDialog";
 import { useAuth } from "@/hooks/useAuth";
 import { usePiStream } from "@/hooks/usePiStream";
 import { useProviders } from "@/hooks/useProviders";
+import { useTelemetry } from "@/hooks/useTelemetry";
 import type { ChatMessage } from "@/types";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -21,6 +23,25 @@ interface SessionEntry {
 
 function App() {
 	const { state: streamState, startStream, abortStream, toolPhase, dispatch } = usePiStream();
+	const telemetry = useTelemetry();
+	const [showTelemetryConsent, setShowTelemetryConsent] = useState<boolean | null>(null);
+
+	// Check if telemetry consent has been decided (first-run detection)
+	useEffect(() => {
+		invoke<{ telemetry?: { enabled?: boolean } }>("get_settings")
+			.then((settings) => {
+				// Show consent dialog only if the telemetry key is absent
+				// (new user or upgrade from pre-telemetry version)
+				if (settings?.telemetry === undefined) {
+					setShowTelemetryConsent(true);
+				} else {
+					setShowTelemetryConsent(false);
+				}
+			})
+			.catch(() => {
+				setShowTelemetryConsent(false);
+			});
+	}, []);
 
 	// Prevent right-click context menu (no reload/inspect in the desktop app)
 	useEffect(() => {
@@ -345,6 +366,20 @@ function App() {
 
 	return (
 		<div className="flex h-screen bg-background">
+			{/* Telemetry consent dialog (overlays everything on first launch) */}
+			{showTelemetryConsent && (
+				<TelemetryConsentDialog
+					onEnable={() => {
+						telemetry.enable();
+						setShowTelemetryConsent(false);
+					}}
+					onDismiss={() => {
+						telemetry.disable();
+						setShowTelemetryConsent(false);
+					}}
+				/>
+			)}
+
 			{/* Sidebar */}
 			{!showConnectModal && (
 				<Sidebar
@@ -359,6 +394,14 @@ function App() {
 					onDeleteSession={handleDeleteSession}
 					onChangeView={setSidebarView}
 					onShowKeyEntry={() => setShowKeyEntry(true)}
+					telemetryEnabled={telemetry.isEnabled}
+					onTelemetryToggle={(enabled) => {
+						if (enabled) {
+							telemetry.enable();
+						} else {
+							telemetry.disable();
+						}
+					}}
 				/>
 			)}
 

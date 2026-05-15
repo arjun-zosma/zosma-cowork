@@ -16,6 +16,7 @@ import {
 	Palette,
 	Plus,
 	Settings,
+	ShieldCheck,
 	Trash2,
 } from "lucide-react";
 import { ExtensionPanel } from "./ExtensionPanel";
@@ -38,6 +39,8 @@ interface SidebarProps {
 	onDeleteSession: (id: string) => void;
 	onChangeView: (view: string) => void;
 	onShowKeyEntry?: () => void;
+	telemetryEnabled?: boolean;
+	onTelemetryToggle?: (enabled: boolean) => void;
 }
 
 export function Sidebar({
@@ -49,6 +52,8 @@ export function Sidebar({
 	onDeleteSession,
 	onChangeView,
 	onShowKeyEntry,
+	telemetryEnabled,
+	onTelemetryToggle,
 }: SidebarProps) {
 	const isSettings = view === "settings";
 	const isExtensions = view === "extensions";
@@ -57,7 +62,11 @@ export function Sidebar({
 		<div className="w-64 bg-sidebar border-r border-sidebar-border flex flex-col">
 			{/* Content area */}
 			{isSettings ? (
-				<SettingsPanel onShowKeyEntry={onShowKeyEntry} />
+				<SettingsPanel
+					onShowKeyEntry={onShowKeyEntry}
+					telemetryEnabled={telemetryEnabled}
+					onTelemetryToggle={onTelemetryToggle}
+				/>
 			) : isExtensions ? (
 				<ExtensionPanel onReload={() => {}} />
 			) : (
@@ -198,7 +207,15 @@ function SessionsPanel({
 
 // ─── Settings Panel ─────────────────────────────────────────────────
 
-function SettingsPanel({ onShowKeyEntry }: { onShowKeyEntry?: () => void }) {
+function SettingsPanel({
+	onShowKeyEntry,
+	telemetryEnabled,
+	onTelemetryToggle,
+}: {
+	onShowKeyEntry?: () => void;
+	telemetryEnabled?: boolean;
+	onTelemetryToggle?: (enabled: boolean) => void;
+}) {
 	const [appVersion, setAppVersion] = useState<string | null>(null);
 	const [currentTheme, setCurrentTheme] = useState(getSavedTheme);
 
@@ -323,6 +340,45 @@ function SettingsPanel({ onShowKeyEntry }: { onShowKeyEntry?: () => void }) {
 							})}
 						</div>
 					</div>
+
+					{/* ── Telemetry ── */}
+					{onTelemetryToggle && (
+						<div>
+							<div className="flex items-center gap-1.5 mb-2">
+								<ShieldCheck className="w-3.5 h-3.5 text-sidebar-foreground/50" />
+								<span className="text-xs font-medium text-sidebar-foreground/70">
+									Telemetry
+								</span>
+							</div>
+							<div
+								className="rounded-lg border p-2.5"
+								style={{
+									borderColor: "hsl(var(--sidebar-border))",
+									background: "hsl(var(--sidebar-background) / 0.5)",
+								}}
+							>
+								<div className="flex items-center justify-between">
+									<div className="flex-1 min-w-0">
+										<p className="text-xs text-sidebar-foreground">
+											Share anonymous usage data and crash reports
+										</p>
+										<p className="text-[10px] text-sidebar-foreground/50 mt-0.5">
+											Nothing is sent unless this is enabled.
+										</p>
+									</div>
+									<label className="relative inline-flex items-center cursor-pointer">
+										<input
+											type="checkbox"
+											className="sr-only peer"
+											checked={telemetryEnabled ?? false}
+											onChange={(e) => onTelemetryToggle(e.target.checked)}
+										/>
+										<div className="w-9 h-5 bg-sidebar-border rounded-full peer peer-checked:bg-primary peer-focus:outline-none peer-focus:ring-1 peer-focus:ring-ring after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-sidebar-foreground after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full peer-checked:after:bg-primary-foreground" />
+									</label>
+								</div>
+							</div>
+						</div>
+					)}
 
 					{/* ── About ── */}
 					<div>
