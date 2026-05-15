@@ -60,8 +60,8 @@ describe("PromptTemplates", () => {
 
 		const firstTemplate = TEMPLATES[0];
 		const card = screen.getByText(firstTemplate.title).closest("button");
-		expect(card).not.toBeNull();
-		await user.click(card!);
+		if (!card) throw new Error("Card element not found");
+		await user.click(card);
 		expect(mockOnSend).toHaveBeenCalledWith(firstTemplate.prompt);
 	});
 
@@ -72,8 +72,8 @@ describe("PromptTemplates", () => {
 		for (const tpl of TEMPLATES) {
 			vi.clearAllMocks();
 			const card = screen.getByText(tpl.title).closest("button");
-			expect(card).not.toBeNull();
-			await user.click(card!);
+			if (!card) throw new Error("Card element not found");
+			await user.click(card);
 			expect(mockOnSend).toHaveBeenCalledWith(tpl.prompt);
 		}
 	});

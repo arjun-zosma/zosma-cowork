@@ -109,10 +109,7 @@ impl Analytics {
 
     /// Track an event if analytics is enabled.
     pub fn track_event(&self, name: &str, props: Option<Value>) {
-        if !self
-            .enabled
-            .load(std::sync::atomic::Ordering::Relaxed)
-        {
+        if !self.enabled.load(std::sync::atomic::Ordering::Relaxed) {
             return;
         }
 
@@ -156,10 +153,7 @@ pub(crate) fn track_analytics_event(
 
 /// Tauri IPC command — enable or disable analytics.
 #[tauri::command]
-pub(crate) fn set_analytics_enabled(
-    app: tauri::AppHandle,
-    enabled: bool,
-) -> Result<(), String> {
+pub(crate) fn set_analytics_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
     if let Some(analytics) = app.try_state::<Analytics>() {
         analytics.set_enabled(enabled);
     }
