@@ -2,6 +2,7 @@ import { ChatMessageItem } from "@/components/ChatMessage";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { MessageInput } from "@/components/MessageInput";
 import { StatusBar } from "@/components/StatusBar";
+import { SuggestedActions } from "@/components/SuggestedActions";
 import type { ToolPhase } from "@/hooks/usePiStream";
 import type { ChatMessage, ModelInfo } from "@/types";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -95,20 +96,7 @@ export function ChatView({
 				style={{ scrollbarGutter: "stable" }}
 			>
 				{isEmpty ? (
-					<div className="flex flex-col items-center justify-center h-full gap-5 px-8">
-						<div className="text-4xl font-bold" style={{ color: "hsl(var(--primary))" }}>
-							✦
-						</div>
-						<h1 className="text-2xl font-semibold" style={{ color: "hsl(var(--foreground))" }}>
-							What are you working on?
-						</h1>
-						<p
-							className="text-sm max-w-md text-center"
-							style={{ color: "hsl(var(--muted-foreground))" }}
-						>
-							Type a message to start chatting with Zosma Cowork.
-						</p>
-					</div>
+					<SuggestedActions onSend={onSend} />
 				) : (
 					<div className="pb-4">
 						{allMessages.map((msg) => (
