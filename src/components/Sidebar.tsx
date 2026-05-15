@@ -22,6 +22,7 @@ import {
 	Trash2,
 } from "lucide-react";
 import { ExtensionPanel } from "./ExtensionPanel";
+import { FeedbackDialog } from "./FeedbackDialog";
 import { PromptTemplates } from "./PromptTemplates";
 import { ProviderAuthSection } from "./ProviderAuthSection";
 import { SkillsPanel } from "./SkillsPanel";
@@ -65,6 +66,7 @@ export function Sidebar({
 	const isExtensions = view === "extensions";
 	const isTemplates = view === "templates";
 	const isSkills = view === "skills";
+	const [showFeedback, setShowFeedback] = useState(false);
 
 	return (
 		<div className="w-64 bg-sidebar border-r border-sidebar-border flex flex-col">
@@ -74,6 +76,7 @@ export function Sidebar({
 					onShowKeyEntry={onShowKeyEntry}
 					telemetryEnabled={telemetryEnabled}
 					onTelemetryToggle={onTelemetryToggle}
+					onShowFeedback={() => setShowFeedback(true)}
 				/>
 			) : isExtensions ? (
 				<ExtensionPanel onReload={() => {}} />
@@ -124,6 +127,9 @@ export function Sidebar({
 					onClick={() => onChangeView("settings")}
 				/>
 			</div>
+
+			{/* Feedback Dialog */}
+			<FeedbackDialog open={showFeedback} onClose={() => setShowFeedback(false)} />
 		</div>
 	);
 }
@@ -235,10 +241,12 @@ function SettingsPanel({
 	onShowKeyEntry,
 	telemetryEnabled,
 	onTelemetryToggle,
+	onShowFeedback,
 }: {
 	onShowKeyEntry?: () => void;
 	telemetryEnabled?: boolean;
 	onTelemetryToggle?: (enabled: boolean) => void;
+	onShowFeedback?: () => void;
 }) {
 	const [appVersion, setAppVersion] = useState<string | null>(null);
 	const [currentTheme, setCurrentTheme] = useState(getSavedTheme);
@@ -402,6 +410,18 @@ function SettingsPanel({
 								</div>
 							</div>
 						</div>
+					)}
+
+					{/* ── Feedback ── */}
+					{onShowFeedback && (
+						<button
+							type="button"
+							onClick={onShowFeedback}
+							className="w-full flex items-center gap-2 px-2.5 py-2 text-xs text-sidebar-foreground hover:bg-sidebar-background/50 rounded-lg transition-colors"
+						>
+							<MessageSquare className="w-3.5 h-3.5 text-sidebar-foreground/50" />
+							Send Feedback
+						</button>
 					)}
 
 					{/* ── About ── */}
