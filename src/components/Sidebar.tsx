@@ -17,6 +17,7 @@ import {
 	ShieldCheck,
 } from "lucide-react";
 import { ConversationSearch } from "./ConversationSearch";
+import { CustomInstructions } from "./CustomInstructions";
 import { ExtensionPanel } from "./ExtensionPanel";
 import { FeedbackDialog } from "./FeedbackDialog";
 import { PromptTemplates } from "./PromptTemplates";
@@ -266,6 +267,25 @@ function SettingsPanel({
 									</button>
 								);
 							})}
+						</div>
+					</div>
+
+					{/* ── Custom Instructions / Persona ── */}
+					<div>
+						<div className="flex items-center gap-1.5 mb-2">
+							<MessageSquare className="w-3.5 h-3.5 text-sidebar-foreground/50" />
+							<span className="text-xs font-medium text-sidebar-foreground/70">
+								Custom Instructions
+							</span>
+						</div>
+						<div
+							className="rounded-lg border p-2.5"
+							style={{
+								borderColor: "hsl(var(--sidebar-border))",
+								background: "hsl(var(--sidebar-background) / 0.5)",
+							}}
+						>
+							<CustomInstructions />
 						</div>
 					</div>
 

@@ -26,6 +26,18 @@ function App() {
 	const { state: streamState, startStream, abortStream, toolPhase, dispatch } = usePiStream();
 	const telemetry = useTelemetry();
 	const [showTelemetryConsent, setShowTelemetryConsent] = useState<boolean | null>(null);
+	const personaRef = useRef("");
+
+	// Load custom instructions (persona) from settings
+	useEffect(() => {
+		invoke<{ persona?: string }>("get_settings")
+			.then((settings) => {
+				if (settings?.persona) {
+					personaRef.current = settings.persona;
+				}
+			})
+			.catch(() => {});
+	}, []);
 
 	// Check if telemetry consent has been decided (first-run detection)
 	useEffect(() => {
@@ -266,7 +278,10 @@ function App() {
 
 			// Keep loadedSessionMessages — startStream only produces the new turn.
 			// Merging happens in the stream-complete effect above.
-			startStream(text);
+			const finalText = personaRef.current
+				? `${personaRef.current}\n\n---\n\n${text}`
+				: text;
+			startStream(finalText);
 		},
 		[activeSessionFile, startStream, models, activeModelId],
 	);
