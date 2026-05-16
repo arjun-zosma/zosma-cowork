@@ -1,5 +1,6 @@
 import { ChatView } from "@/chat/ChatView";
 import { HomeView } from "@/components/HomeView";
+import { SettingsPage } from "@/components/SettingsPage";
 import { ShareExport } from "@/components/ShareExport";
 import { Sidebar } from "@/components/Sidebar";
 import { TelemetryConsentDialog } from "@/components/TelemetryConsentDialog";
@@ -77,6 +78,7 @@ function App() {
 	// modal even without stored credentials.
 	const [skipOnboarding, setSkipOnboarding] = useState(false);
 	const [sidebarView, setSidebarView] = useState("chats");
+	const [showSettings, setShowSettings] = useState(false);
 	// True iff at least one subscription (OAuth) provider is signed in.
 	// Drives the "Skip" → "Continue" label flip on the Connect modal —
 	// note this is *narrower* than `hasCredentials`, which is true for any
@@ -320,6 +322,7 @@ function App() {
 	const handleSkipToSettings = useCallback(() => {
 		setSkipOnboarding(true);
 		setShowKeyEntry(false);
+		setShowSettings(true);
 		setSidebarView("settings");
 	}, []);
 
@@ -423,14 +426,12 @@ function App() {
 					}}
 					onNewSession={handleNewSession}
 					onDeleteSession={handleDeleteSession}
-					onChangeView={setSidebarView}
-					onShowKeyEntry={() => setShowKeyEntry(true)}
-					telemetryEnabled={telemetry.isEnabled}
-					onTelemetryToggle={(enabled) => {
-						if (enabled) {
-							telemetry.enable();
+					onChangeView={(view) => {
+						setSidebarView(view);
+						if (view === "settings") {
+							setShowSettings(true);
 						} else {
-							telemetry.disable();
+							setShowSettings(false);
 						}
 					}}
 					onSend={handleSend}
@@ -473,6 +474,19 @@ function App() {
 							onSkipToSettings={handleSkipToSettings}
 							onDismiss={handleDismissConnect}
 							hasSubscription={hasSubscription}
+						/>
+					) : showSettings ? (
+						<SettingsPage
+							onClose={() => {
+								setShowSettings(false);
+								setSidebarView("chats");
+							}}
+							onShowKeyEntry={() => setShowKeyEntry(true)}
+							telemetryEnabled={telemetry.isEnabled}
+							onTelemetryToggle={(enabled) => {
+								if (enabled) telemetry.enable();
+								else telemetry.disable();
+							}}
 						/>
 					) : loadingSession ? (
 						<div className="flex-1 flex items-center justify-center">
