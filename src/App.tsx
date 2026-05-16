@@ -1,5 +1,6 @@
 import { ChatView } from "@/chat/ChatView";
 import { HomeView } from "@/components/HomeView";
+import { ShareExport } from "@/components/ShareExport";
 import { Sidebar } from "@/components/Sidebar";
 import { TelemetryConsentDialog } from "@/components/TelemetryConsentDialog";
 import { trackEvent } from "@/lib/telemetry";
@@ -445,17 +446,22 @@ function App() {
 							<h1 className="text-sm font-semibold text-foreground">Zosma Cowork</h1>
 							<span className="text-xs text-muted-foreground">OpenCode Go</span>
 						</div>
-						{activeModelId &&
-							(() => {
-								const m = models.find((m) => m.id === activeModelId);
-								const p = m?.provider?.split("-")[0] || "";
-								return (
-									<span className="text-xs text-muted-foreground/50 font-mono">
-										{m?.name || activeModelId}
-										{p && <span className="text-muted-foreground/30"> ({p})</span>}
-									</span>
-								);
-							})()}
+						<div className="flex items-center gap-2">
+							{activeModelId &&
+								(() => {
+									const m = models.find((m) => m.id === activeModelId);
+									const p = m?.provider?.split("-")[0] || "";
+									return (
+										<span className="text-xs text-muted-foreground/50 font-mono">
+											{m?.name || activeModelId}
+											{p && <span className="text-muted-foreground/30"> ({p})</span>}
+										</span>
+									);
+								})()}
+						</div>
+						<div className="flex items-center gap-2">
+							<ShareExport messages={displayMessages} />
+						</div>
 					</header>
 				)}
 
