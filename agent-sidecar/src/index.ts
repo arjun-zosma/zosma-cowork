@@ -57,6 +57,9 @@ import {
 	setExtensionEnabled,
 	uninstallExtension,
 } from "./extension-manager.js";
+import { eventBus } from "./event-bus.js";
+import { startRemoteServer, stopRemoteServer } from "./remote-server.js";
+import { commandQueue } from "./command-queue.js";
 // Vendored pi-anthropic-messages bridge (see scripts/prebuild.mjs). Without
 // this loaded as an extension, Claude Pro/Max OAuth requests are
 // fingerprinted by Anthropic as a "third-party app" and rejected with a
@@ -243,6 +246,23 @@ interface FetchSkillPackumentCommand {
 	packageName: string;
 }
 
+interface StartRemoteCommand {
+	type: "start_remote";
+	id: string;
+	port?: number;
+	host?: string;
+}
+
+interface StopRemoteCommand {
+	type: "stop_remote";
+	id: string;
+}
+
+interface GetRemoteStatusCommand {
+	type: "get_remote_status";
+	id: string;
+}
+
 type Command =
 	| InitCommand
 	| GetModelsCommand
@@ -272,7 +292,10 @@ type Command =
 	| ListSkillsCommand
 	// | InstallSkillCommand — moved to Rust (lib.rs)
 	// | RemoveSkillCommand — moved to Rust (lib.rs)
-	| FetchSkillPackumentCommand;
+	| FetchSkillPackumentCommand
+	| StartRemoteCommand
+	| StopRemoteCommand
+	| GetRemoteStatusCommand;
 
 // ---------------------------------------------------------------------------
 // Logger (stderr — never interferes with stdout protocol)
@@ -287,6 +310,36 @@ function log(...args: unknown[]) {
 // ---------------------------------------------------------------------------
 
 function send(obj: unknown) {
+	// Broadcast to EventBus subscribers (e.g., WebSocket remote clients)
+	// before writing to stdout. This ensures remote clients receive events
+	// even when stdout is piped to the Tauri backend.
+	const busEvent = obj as {
+		type: string;
+		id?: string;
+		data?: unknown;
+		message?: string;
+		event?: unknown;
+	};
+	if (busEvent.type === "event") {
+		eventBus.publish({ type: "event", data: busEvent });
+	} else if (busEvent.type === "result") {
+		eventBus.publish({
+			type: "result",
+			id: busEvent.id || "",
+			data: busEvent.data,
+		});
+	} else if (busEvent.type === "done") {
+		eventBus.publish({ type: "done", id: busEvent.id || "" });
+	} else if (busEvent.type === "error") {
+		eventBus.publish({
+			type: "error",
+			id: busEvent.id || "",
+			message: busEvent.message || "",
+		});
+	} else if (busEvent.type === "ready") {
+		eventBus.publish({ type: "ready" });
+	}
+
 	try {
 		process.stdout.write(`${JSON.stringify(obj)}\n`);
 	} catch (err) {
@@ -761,24 +814,13 @@ async function main() {
 		log("Sidecar ready — %d models available", models.length);
 	}
 
-	// Process stdin commands
-	const rl = createInterface({ input: process.stdin, crlfDelay: Number.POSITIVE_INFINITY });
-
-	for await (const line of rl) {
-		if (!line.trim()) continue;
-
-		let cmd: Command;
-		try {
-			cmd = JSON.parse(line);
-		} catch {
-			log("Invalid JSON: %s", line.slice(0, 100));
-			continue;
-		}
-
+	/// Processes a single command through the sidecar's command switch.
+	/// Extracted so both stdin lines and queued remote commands use the
+	/// same dispatch logic.
+	async function handleCommand(cmd: Command): Promise<void> {
 		log("Command: type=%s id=%s", cmd.type, "id" in cmd ? cmd.id : "-");
 
-		try {
-			switch (cmd.type) {
+		switch (cmd.type) {
 				// ── init ───────────────────────────────────────────────────
 				case "init": {
 					await initAgent(cmd.zosmaDir ?? defaultZosmaDir());
@@ -1413,6 +1455,48 @@ async function main() {
 					break;
 				}
 
+				// ── start_remote (HTTP/WS remote access server) ────────────────
+				case "start_remote": {
+					const rc = cmd as StartRemoteCommand;
+					try {
+						const port = rc.port || 8765;
+						const host = rc.host || "127.0.0.1";
+						startRemoteServer(zosmaDir, { port, host });
+						send({ type: "result", id: rc.id, data: { port, host, running: true } });
+					} catch (err) {
+						const message = err instanceof Error ? err.message : String(err);
+						log("start_remote error: %s", message);
+						send({ type: "error", id: rc.id, message });
+					}
+					break;
+				}
+
+				// ── stop_remote ────────────────────────────────────────────────
+				case "stop_remote": {
+					const rc = cmd as StopRemoteCommand;
+					try {
+						stopRemoteServer();
+						send({ type: "result", id: rc.id, data: { running: false } });
+					} catch (err) {
+						const message = err instanceof Error ? err.message : String(err);
+						log("stop_remote error: %s", message);
+						send({ type: "error", id: rc.id, message });
+					}
+					break;
+				}
+
+				// ── get_remote_status ────────────────────────────────────────────
+				case "get_remote_status": {
+					const { getRemoteStatus } = await import("./remote-server.js");
+					try {
+						const status = getRemoteStatus();
+						send({ type: "result", id: cmd.id, data: status });
+					} catch {
+						send({ type: "result", id: cmd.id, data: { running: false } });
+					}
+					break;
+				}
+
 				// Skill install/remove handled directly in Rust (lib.rs) — no npx needed.
 				// case "install_skill" and case "remove_skill" removed from sidecar.
 
@@ -1423,6 +1507,24 @@ async function main() {
 						message: `Unknown command: ${(cmd as Command).type}`,
 					});
 			}
+	}
+
+	// Process stdin commands
+	const rl = createInterface({ input: process.stdin, crlfDelay: Number.POSITIVE_INFINITY });
+
+	for await (const line of rl) {
+		if (!line.trim()) continue;
+
+		let cmd: Command;
+		try {
+			cmd = JSON.parse(line);
+		} catch {
+			log("Invalid JSON: %s", line.slice(0, 100));
+			continue;
+		}
+
+		try {
+			await handleCommand(cmd);
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err);
 			log("Error: %s", message);
@@ -1434,6 +1536,22 @@ async function main() {
 			if (activePromptId) {
 				send({ type: "done", id: activePromptId });
 				activePromptId = null;
+			}
+		}
+
+		// Process any commands queued by the remote server (HTTP/WebSocket)
+		while (commandQueue.hasPending()) {
+			const qCmd = commandQueue.dequeue()!;
+			try {
+				await handleCommand(qCmd as Command);
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				log("Queue error: %s", message);
+				send({
+					type: "error",
+					id: qCmd.id || "unknown",
+					message,
+				});
 			}
 		}
 	}

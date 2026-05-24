@@ -398,6 +398,15 @@ The app stores data in `~/.zosmaai/cowork/` — separate from `~/.pi/agent/` (pi
 | Distribution pipeline | 4 | 🟡 High | 2 days | CI builds |
 | Auto-update | 4 | 🟢 Medium | 2 days | Tauri updater |
 | Docs & launch | 4 | 🟡 High | 3 days | Ship it |
+| Embedded HTTP+WS server | 6.0 | 🔴 Critical | 2 days | Node sidecar web server |
+| Serve mobile web UI | 6.0 | 🔴 Critical | 2 days | Responsive React build |
+| QR code + pairing | 6.0 | 🟡 High | 1 day | Remote Access settings UI |
+| Responsive chat view | 6.1 | 🔴 Critical | 3 days | Touch-friendly mobile UX |
+| PWA manifest | 6.1 | 🟢 Medium | 1 day | Add to Home Screen |
+| Tailscale detection + docs | 6.2 | 🟡 High | 1 day | Outside-home access guide |
+| Tunnel integration (ngrok) | 6.2 | 🟢 Medium | 2 days | Optional public URL |
+| Security audit | 6.2 | 🔴 Critical | 2 days | PIN, HTTPS, rate limiting |
+| Native companion app | 6.3 | 🟢 Medium | 2-3 weeks | Future: React Native wrapper |
 
 ---
 
@@ -699,3 +708,172 @@ You can create professional Office documents (DOCX, PPTX, XLSX) using OfficeCLI.
 - Documents open correctly in Microsoft Office 365, Google Docs/Sheets, LibreOffice
 - Documents pass OfficeCLI validation (no OpenXML schema errors)
 - Documents pass visual QA (formatted correctly, consistent design)
+
+---
+
+## 📱 Phase 6: Remote Phone Access
+
+**Goal:** Let users operate Zosma Cowork from their phone — via local WiFi or from anywhere using Tailscale/ngrok — with zero additional installs on the phone.
+
+### Why This Matters
+
+| Insight | Implication |
+|---------|------------|
+| Users want to check in, ask questions, and start tasks from their phone | Cowork isn't useful if you're tied to your desk. Knowledge workers are mobile. |
+| The sidecar (Node.js + pi-agent-core) can't run on iOS/Android | A full mobile port is impossible without a server backend. The phone must connect to the desktop. |
+| Most users have Tailscale/ngrok for dev work anyway | We can leverage existing tools instead of building a complex relay infrastructure. |
+| Privacy is a core value ("data stays local") | The solution must be opt-in, encrypted, and never route through third-party servers by default. |
+
+### Architecture
+
+```
+┌─ Desktop (running cowork) ─────────────────────┐
+│                                                │
+│  React Frontend (Tauri WebView)                │
+│       │                                        │
+│  Rust Backend (lib.rs)                         │
+│       │                                        │
+│  Node Sidecar ─── port :8765                    │
+│  └── HTTP server (built-in http module)        │
+│      + WebSocket (streaming events)            │
+│      + serves mobile-responsive React build    │
+│      + QR code generator                       │
+│                                                │
+└──────┬─────────────────────────────────────────┘
+       │ LAN / Tailscale / ngrok
+       ▼
+┌─ Phone ───────────────────────────────────────┐
+│                                                │
+│  Mobile Browser (Safari/Chrome)                │
+│  ├── Scan QR code → opens web UI               │
+│  ├── Touch-optimized chat                       │
+│  ├── Real-time streaming via WebSocket          │
+│  ├── PWA: "Add to Home Screen"                  │
+│  └── OR native companion app (future)          │
+└────────────────────────────────────────────────┘
+```
+
+### Protocol
+
+Since the sidecar already communicates via a JSON-line protocol over stdin/stdout, the HTTP server wraps the same protocol:
+
+```
+POST /api/command
+  Body: {"type":"prompt","id":"...","text":"Hello"}
+  Response: {"type":"result","id":"...","data":...}
+
+WebSocket /api/stream
+  → Server sends streaming events:
+     {"type":"event","event":{"kind":"thinking","content":"..."}}
+     {"type":"done","id":"..."}
+     {"type":"error","id":"...","message":"..."}
+  ← Client sends commands:
+     {"type":"abort","id":"..."}
+```
+
+### Phased Rollout
+
+#### Phase 6.0 — Foundation: Web Server in Sidecar (Week 1)
+**Goal:** Ship a working web server inside the sidecar that a phone browser can connect to.
+
+| # | Task | Details |
+|---|------|---------|
+| 6.0.1 | Embedded HTTP+WS server | Add Node.js `http` + `ws` (WebSocket) server in `agent-sidecar/src/remote-server.ts`. Listens on a configurable port (default 8765). Exposes POST /api/command and WS /api/stream. |
+| 6.0.2 | Wire to existing protocol | The HTTP server reads from the same sidecar event bus and writes commands to the same stdin pipe. Essentially a network proxy for the existing JSON-line protocol. |
+| 6.0.3 | Serve mobile web UI | Build a mobile-responsive version of the React frontend. Same components, but with CSS media queries + touch-friendly input. The Vite build produces a `dist/` folder that the HTTP server serves statically. |
+| 6.0.4 | QR code display in desktop | Add a "Remote Access" section in Settings. When enabled, shows a QR code encoding `http://{local-ip}:{port}`. User scans with phone → opens web UI. |
+| 6.0.5 | Security: local-only default | Server binds to `127.0.0.1` by default (local machine only). User must explicitly enable LAN/WAN access. Single-use PIN shown on desktop, entered on phone for first pairing. |
+| 6.0.6 | Feature flag | "Remote Access" is off by default. Enable via Settings toggle. Side effect: starts/stops the embedded HTTP server. |
+
+#### Phase 6.1 — Mobile UI Polish (Week 2)
+**Goal:** A great phone experience.
+
+| # | Task | Details |
+|---|------|---------|
+| 6.1.1 | Responsive chat view | Adapt `ChatView.tsx` for mobile: larger tap targets, bottom-sheet composer, swipe gestures, collapsible tool calls. |
+| 6.1.2 | Touch-friendly composer | Voice button (Web Speech API), emoji picker, larger send button, auto-focus on open. |
+| 6.1.3 | PWA manifest | Service worker for offline support, `manifest.json` for "Add to Home Screen", splash screen, app icon. |
+| 6.1.4 | Session continuity | Phone and desktop share the same session data (stored in `~/.zosmaai/cowork/sessions/`). No sync needed — both talk to the same sidecar. |
+| 6.1.5 | Connection status bar | Shows "Connected to desktop" / "Disconnected" in the mobile UI. Reconnect button. Auto-reconnect WebSocket. |
+| 6.1.6 | Pull-to-refresh history | Fetch recent sessions from the sidecar. |
+
+#### Phase 6.2 — From Anywhere: Tailscale & Tunnels (Week 3)
+**Goal:** Make it trivially easy to access cowork from outside the home network.
+
+| # | Task | Details |
+|---|------|---------|
+| 6.2.1 | Tailscale detection | Check if `tailscale` is installed. If yes, show the Tailscale IP in the Remote Access panel alongside the LAN IP. |
+| 6.2.2 | Tailscale docs | Write clear setup docs: install Tailscale on desktop → install on phone → enable Remote Access → enter Tailscale IP in phone browser. Zero config beyond that. |
+| 6.2.3 | ngrok integration (optional) | Detect `ngrok`. Offer "Create temporary public URL" button that runs `ngrok http 8765` and shows the URL. Warn: "Anyone with this URL can access your coworker". |
+| 6.2.4 | Built-in relay (future) | Optional lightweight WebSocket relay server (deployable to a cheap VPS or Cloudflare Worker). Desktop connects outbound (no open port needed). Phone connects to relay with auth token. End-to-end encrypted. |
+| 6.2.5 | Security audit | Review attack surface: PIN pairing, HTTPS (self-signed cert for local), rate limiting, CORS, WebSocket origin checks. |
+
+#### Phase 6.3 — Native Companion App (Future, Optional)
+**Goal:** App Store presence for the phone experience.
+
+| # | Task | Details |
+|---|------|---------|
+| 6.3.1 | React Native / web wrapper | Lightweight app that is essentially a browser wrapper around the web UI with added native features (push notifications, biometric unlock, background connectivity). |
+| 6.3.2 | Push notifications | When the desktop is running and a task completes, push a notification to the phone. Uses the WebSocket connection (or FCM for native). |
+| 6.3.3 | QR pairing flow | Open app → "Scan QR code from desktop" → auto-connects. Saves connection details for future auto-connect. |
+| 6.3.4 | App Store submission | iOS App Store + Google Play. Requires Apple Developer ($99/yr) + Google Play ($25 one-time). |
+
+### Tailscale & ngrok: How They Work
+
+#### Tailscale (Recommended)
+
+Tailscale creates a secure mesh VPN between your devices. It's **free for personal use** (up to 100 devices), **zero configuration**, and **end-to-end encrypted**.
+
+```
+Desktop                                Phone
+┌────────────┐                        ┌────────────┐
+│ Tailscale  │──── WireGuard ────────►│ Tailscale  │
+│ IP: 100.x  │    (direct tunnel)     │ IP: 100.y  │
+│            │                        │            │
+│ cowork on  │◄── http://100.x:8765 ──│ browser    │
+│ port 8765  │                        │            │
+└────────────┘                        └────────────┘
+```
+
+**Setup (1 minute):**
+1. Install Tailscale on desktop: `curl -fsSL https://tailscale.com/install.sh | sh`
+2. Install Tailscale on phone (App Store / Play Store)
+3. Sign in to same account on both
+4. Enable "Remote Access" in cowork → scan QR code from phone
+
+#### ngrok (Alternative)
+
+ngrok creates a public HTTPS URL that tunnels to your local server. Handy for quick sharing but less private:
+
+```bash
+ngrok http 8765
+# → https://abc123.ngrok-free.app
+```
+
+**Tradeoffs:**
+| Factor | Tailscale | ngrok |
+|--------|-----------|-------|
+| Setup time | 1 minute (install + auth) | 1 minute (install + auth) |
+| Privacy | End-to-end encrypted mesh | Traffic routed through ngrok servers |
+| Free tier | Up to 100 devices, unlimited | Random URL, 40 conn/min, 1 GB/month |
+| Works without internet | ✓ (LAN) | ✗ (needs public internet) |
+| Non-technical friendly | Very (just works) | Moderate (need to copy URL) |
+
+### Privacy & Security Model
+
+| Concern | Mitigation |
+|---------|------------|
+| Rogue access on LAN | Server binds 127.0.0.1 by default. LAN access requires explicit toggle. PIN pairing gates all remote sessions. |
+| Data in transit | All traffic is local (loopback or LAN) or tunneled through Tailscale's WireGuard (encrypted). ngrok uses HTTPS. Future: optional built-in TLS. |
+| Data at rest | Same as desktop — data stays in `~/.zosmaai/cowork/`. No extra storage. |
+| Session hijacking | PIN is single-use, shown only in the desktop UI, must be entered within 60 seconds. |
+| Remote code execution | The HTTP API exposes the same commands as the Tauri IPC layer — no additional attack surface beyond what already exists. |
+
+### Success Criteria
+
+- User enables "Remote Access" → sees QR code → scans with phone → chats with coworker from the browser
+- User leaves home, connects via Tailscale → phone still works
+- User taps "Share Access" → gets a temporary URL → sends to a colleague for demo
+- No data leaves the user's network (unless they explicitly use ngrok/relay)
+- Mobile UI is comfortable for quick interactions (send a message, read reply)
+- PIN pairing prevents unauthorized access
