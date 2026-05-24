@@ -10,6 +10,7 @@ import {
 	Palette,
 	Puzzle,
 	ShieldCheck,
+	Wifi,
 	X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -17,6 +18,7 @@ import { CustomInstructions } from "./CustomInstructions";
 import { ExtensionPanel } from "./ExtensionPanel";
 import { FeedbackDialog } from "./FeedbackDialog";
 import { ProviderAuthSection } from "./ProviderAuthSection";
+import { RemoteAccessPanel } from "./RemoteAccessPanel";
 import { SkillsPanel } from "./SkillsPanel";
 
 // ─── Section definitions ──────────────────────────────────────────
@@ -34,6 +36,7 @@ const SECTIONS: SettingsSection[] = [
 	{ id: "custom-instructions", label: "Custom Instructions", icon: MessageSquare },
 	{ id: "theme", label: "Theme", icon: Palette },
 	{ id: "telemetry", label: "Telemetry", icon: ShieldCheck },
+	{ id: "remote-access", label: "Remote Access", icon: Wifi },
 	{ id: "about", label: "About", icon: Info },
 ];
 
@@ -345,6 +348,17 @@ export function SettingsPage({
 									</label>
 								</div>
 							</div>
+						</section>
+					)}
+
+					{/* ── Remote Access ── */}
+					{activeSection === "remote-access" && (
+						<section>
+							<div className="flex items-center gap-2 mb-4">
+								<Wifi className="w-4 h-4 text-foreground/50" />
+								<h2 className="text-sm font-semibold text-foreground">Remote Access</h2>
+							</div>
+							<RemoteAccessPanel />
 						</section>
 					)}
 

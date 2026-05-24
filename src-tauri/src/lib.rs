@@ -1221,6 +1221,47 @@ async fn remove_skill(name: String, _s: State<'_, AppState>) -> Result<Value, St
     Err(format!("Skill '{}' not found in {:?}", name, skills_dir))
 }
 
+// ── Remote Access (Phase 6.0) ──────────────────────────────────
+
+#[tauri::command]
+async fn start_remote_server(
+    port: Option<u16>,
+    host: Option<String>,
+    s: State<'_, AppState>,
+) -> Result<Value, String> {
+    scmd_r(
+        &s,
+        &serde_json::json!({
+            "type": "start_remote",
+            "id": "sr",
+            "port": port.unwrap_or(8765),
+            "host": host.unwrap_or_else(|| "127.0.0.1".to_string()),
+        }),
+        std::time::Duration::from_secs(10),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn stop_remote_server(s: State<'_, AppState>) -> Result<Value, String> {
+    scmd_r(
+        &s,
+        &serde_json::json!({"type": "stop_remote", "id": "sr"}),
+        std::time::Duration::from_secs(10),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn get_remote_status(s: State<'_, AppState>) -> Result<Value, String> {
+    scmd_r(
+        &s,
+        &serde_json::json!({"type": "get_remote_status", "id": "grs"}),
+        std::time::Duration::from_secs(10),
+    )
+    .await
+}
+
 #[tauri::command]
 async fn write_user_file(path: String, content: String) -> Result<(), String> {
     tokio::fs::write(&path, &content)
@@ -1360,6 +1401,9 @@ pub fn run() {
             list_skills,
             install_skill,
             remove_skill,
+            start_remote_server,
+            stop_remote_server,
+            get_remote_status,
             write_user_file,
             open_url,
             crate::analytics::track_analytics_event,

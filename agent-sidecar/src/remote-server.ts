@@ -24,6 +24,7 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
@@ -542,6 +543,23 @@ export function stopRemoteServer(): void {
 }
 
 /**
+ * Get all non-internal IPv4 addresses of this machine.
+ */
+function getLocalIPs(): string[] {
+	const interfaces = os.networkInterfaces();
+	const ips: string[] = [];
+	for (const addrs of Object.values(interfaces)) {
+		if (!addrs) continue;
+		for (const addr of addrs) {
+			if (addr.family === "IPv4" && !addr.internal) {
+				ips.push(addr.address);
+			}
+		}
+	}
+	return ips;
+}
+
+/**
  * Get the current remote server status.
  */
 export function getRemoteStatus(): {
@@ -550,6 +568,7 @@ export function getRemoteStatus(): {
 	host?: string;
 	connectedClients?: number;
 	pin?: string;
+	localIPs?: string[];
 } {
 	if (!state) {
 		return { running: false };
@@ -560,5 +579,6 @@ export function getRemoteStatus(): {
 		host: state.config.host,
 		connectedClients: state.wss.clients.size,
 		pin: state.pin,
+		localIPs: getLocalIPs(),
 	};
 }
