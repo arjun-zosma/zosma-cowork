@@ -8,12 +8,11 @@
  * All methods accept an optional AbortSignal for cancellation.
  */
 
-import { execSync, type ExecSyncOptions } from "node:child_process";
+import { type ExecSyncOptions, execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { getOfficeCLIResolver } from "./officecli-resolver.js";
 import type {
 	AddElementParams,
-	BatchAction,
 	BatchEditParams,
 	BatchEditResult,
 	CreateDocumentParams,
@@ -27,7 +26,6 @@ import type {
 	ToolExecutionContext,
 	ValidateDocumentResult,
 	ValidationIssue,
-	ViewMode,
 } from "./tool-types.js";
 import { OfficeCLIError } from "./tool-types.js";
 
@@ -54,15 +52,9 @@ export class OfficeCLIExecutor {
 	 * Create a new blank document.
 	 * Type is inferred from file extension if not specified.
 	 */
-	createDocument(
-		params: CreateDocumentParams,
-		ctx?: ToolExecutionContext,
-	): CreateDocumentResult {
+	createDocument(params: CreateDocumentParams, ctx?: ToolExecutionContext): CreateDocumentResult {
 		const binary = this.getBinaryPath();
-		const args = [
-			"create",
-			this.escapePath(params.path, ctx?.cwd),
-		];
+		const args = ["create", this.escapePath(params.path, ctx?.cwd)];
 		if (params.template) {
 			args.push("--template", this.escapePath(params.template, ctx?.cwd));
 		}
@@ -70,19 +62,13 @@ export class OfficeCLIExecutor {
 		const result = this.execute(binary, args, ctx);
 
 		// Determine type from extension or explicit param
-		const ext = params.path.split(".").pop()?.toLowerCase() as
-			| "docx"
-			| "pptx"
-			| "xlsx"
-			| undefined;
+		const ext = params.path.split(".").pop()?.toLowerCase() as "docx" | "pptx" | "xlsx" | undefined;
 		const type = params.type ?? ext ?? "docx";
 
 		return {
 			path: params.path,
 			type,
-			sizeBytes: existsSync(params.path)
-				? require("node:fs").statSync(params.path).size
-				: 0,
+			sizeBytes: existsSync(params.path) ? require("node:fs").statSync(params.path).size : 0,
 			created: result.success,
 		};
 	}
@@ -92,10 +78,7 @@ export class OfficeCLIExecutor {
 	/**
 	 * Add an element to a document at the specified DOM path.
 	 */
-	addElement(
-		params: AddElementParams,
-		ctx?: ToolExecutionContext,
-	): OfficeCLIResult {
+	addElement(params: AddElementParams, ctx?: ToolExecutionContext): OfficeCLIResult {
 		const binary = this.getBinaryPath();
 		const args = [
 			"add",
@@ -123,10 +106,7 @@ export class OfficeCLIExecutor {
 	/**
 	 * Set properties and/or content of an existing element.
 	 */
-	setElement(
-		params: SetElementParams,
-		ctx?: ToolExecutionContext,
-	): OfficeCLIResult {
+	setElement(params: SetElementParams, ctx?: ToolExecutionContext): OfficeCLIResult {
 		const binary = this.getBinaryPath();
 		const args = [
 			"set",
@@ -148,16 +128,9 @@ export class OfficeCLIExecutor {
 	/**
 	 * Remove an element from a document.
 	 */
-	removeElement(
-		params: RemoveElementParams,
-		ctx?: ToolExecutionContext,
-	): OfficeCLIResult {
+	removeElement(params: RemoveElementParams, ctx?: ToolExecutionContext): OfficeCLIResult {
 		const binary = this.getBinaryPath();
-		const args = [
-			"remove",
-			this.escapePath(params.path, ctx?.cwd),
-			params.domPath,
-		];
+		const args = ["remove", this.escapePath(params.path, ctx?.cwd), params.domPath];
 		return this.execute(binary, args, ctx);
 	}
 
@@ -166,16 +139,9 @@ export class OfficeCLIExecutor {
 	/**
 	 * Read/inspect a document in the specified mode.
 	 */
-	readDocument(
-		params: ReadDocumentParams,
-		ctx?: ToolExecutionContext,
-	): OfficeCLIResult {
+	readDocument(params: ReadDocumentParams, ctx?: ToolExecutionContext): OfficeCLIResult {
 		const binary = this.getBinaryPath();
-		const args = [
-			"view",
-			this.escapePath(params.path, ctx?.cwd),
-			params.mode,
-		];
+		const args = ["view", this.escapePath(params.path, ctx?.cwd), params.mode];
 
 		if (params.issueType) {
 			args.push("--type", params.issueType);
@@ -193,10 +159,7 @@ export class OfficeCLIExecutor {
 	 * Validate a document against the OpenXML schema.
 	 * Returns structured validation results.
 	 */
-	validateDocument(
-		params: { path: string },
-		ctx?: ToolExecutionContext,
-	): ValidateDocumentResult {
+	validateDocument(params: { path: string }, ctx?: ToolExecutionContext): ValidateDocumentResult {
 		const binary = this.getBinaryPath();
 		const args = ["validate", this.escapePath(params.path, ctx?.cwd)];
 
@@ -236,10 +199,7 @@ export class OfficeCLIExecutor {
 	 * Execute multiple actions in a single save cycle.
 	 * More efficient than individual add/set/remove calls.
 	 */
-	batchEdit(
-		params: BatchEditParams,
-		ctx?: ToolExecutionContext,
-	): BatchEditResult {
+	batchEdit(params: BatchEditParams, ctx?: ToolExecutionContext): BatchEditResult {
 		const binary = this.getBinaryPath();
 		const actionsJson = JSON.stringify({ actions: params.actions });
 
@@ -247,12 +207,7 @@ export class OfficeCLIExecutor {
 		const tmpFile = this.writeTempFile(actionsJson);
 
 		try {
-			const args = [
-				"batch",
-				this.escapePath(params.path, ctx?.cwd),
-				"--actions",
-				`@${tmpFile}`,
-			];
+			const args = ["batch", this.escapePath(params.path, ctx?.cwd), "--actions", `@${tmpFile}`];
 
 			const result = this.execute(binary, args, ctx);
 
@@ -292,10 +247,7 @@ export class OfficeCLIExecutor {
 		ctx?: ToolExecutionContext,
 	): { url: string; port: number } {
 		const binary = this.getBinaryPath();
-		const args = [
-			"watch",
-			this.escapePath(params.path, ctx?.cwd),
-		];
+		const args = ["watch", this.escapePath(params.path, ctx?.cwd)];
 
 		if (params.browser !== false) {
 			args.push("--browser");
@@ -319,16 +271,9 @@ export class OfficeCLIExecutor {
 	/**
 	 * Get basic info about a document (type, size, counts).
 	 */
-	getDocumentInfo(
-		params: { path: string },
-		ctx?: ToolExecutionContext,
-	): DocumentInfo {
+	getDocumentInfo(params: { path: string }, ctx?: ToolExecutionContext): DocumentInfo {
 		const binary = this.getBinaryPath();
-		const args = [
-			"view",
-			this.escapePath(params.path, ctx?.cwd),
-			"structure",
-		];
+		const args = ["view", this.escapePath(params.path, ctx?.cwd), "structure"];
 
 		const result = this.execute(binary, args, ctx);
 
@@ -341,11 +286,7 @@ export class OfficeCLIExecutor {
 			docInfo = this.parseDocumentInfo(result.stdout, params.path);
 		}
 
-		const ext = params.path.split(".").pop()?.toLowerCase() as
-			| "docx"
-			| "pptx"
-			| "xlsx"
-			| undefined;
+		const ext = params.path.split(".").pop()?.toLowerCase() as "docx" | "pptx" | "xlsx" | undefined;
 		let sizeBytes = 0;
 		try {
 			sizeBytes = require("node:fs").statSync(params.path).size;
@@ -369,11 +310,7 @@ export class OfficeCLIExecutor {
 	 * Execute a command against the OfficeCLI binary.
 	 * Provides unified timeout, error handling, and result parsing.
 	 */
-	private execute(
-		binary: string,
-		args: string[],
-		ctx?: ToolExecutionContext,
-	): OfficeCLIResult {
+	private execute(binary: string, args: string[], ctx?: ToolExecutionContext): OfficeCLIResult {
 		const cmd = this.buildCommand(binary, args);
 
 		const options: ExecSyncOptions = {
@@ -456,10 +393,7 @@ export class OfficeCLIExecutor {
 	/**
 	 * Parse document info from text/structured output.
 	 */
-	private parseDocumentInfo(
-		output: string,
-		path: string,
-	): Partial<DocumentInfo> {
+	private parseDocumentInfo(output: string, path: string): Partial<DocumentInfo> {
 		const info: Partial<DocumentInfo> = {};
 
 		const slideMatch = output.match(/(\d+)\s+slide[s]?/i);

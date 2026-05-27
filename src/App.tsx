@@ -1,8 +1,5 @@
 import { ChatView } from "@/chat/ChatView";
 import { HomeView } from "@/components/HomeView";
-import { MobileBottomNav } from "@/components/MobileBottomNav";
-import { MobileTopBar } from "@/components/MobileTopBar";
-import { RemoteConnectionBar } from "@/components/RemoteConnectionBar";
 import { SettingsPage } from "@/components/SettingsPage";
 import { ShareExport } from "@/components/ShareExport";
 import { Sidebar } from "@/components/Sidebar";
@@ -82,7 +79,6 @@ function App() {
 	const [skipOnboarding, setSkipOnboarding] = useState(false);
 	const [sidebarView, setSidebarView] = useState("chats");
 	const [showSettings, setShowSettings] = useState(false);
-	const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 	// True iff at least one subscription (OAuth) provider is signed in.
 	// Drives the "Skip" → "Continue" label flip on the Connect modal —
 	// note this is *narrower* than `hasCredentials`, which is true for any
@@ -415,108 +411,35 @@ function App() {
 				/>
 			)}
 
-			{/* Sidebar — desktop: visible, mobile: slide-over */}
+			{/* Sidebar */}
 			{!showConnectModal && (
-				<>
-					{/* Desktop sidebar */}
-					<div className="hidden md:block">
-						<Sidebar
-							view={sidebarView}
-							sessions={sidebarSessions}
-							activeSessionId={activeSessionFile || undefined}
-							onSessionSelect={(id) => {
-								setSidebarView("chats");
-								handleSessionSelect(id);
-								setMobileMenuOpen(false);
-							}}
-							onNewSession={handleNewSession}
-							onDeleteSession={handleDeleteSession}
-							onChangeView={(view) => {
-								setSidebarView(view);
-								if (view === "settings") {
-									setShowSettings(true);
-								} else {
-									setShowSettings(false);
-								}
-							}}
-							onSend={handleSend}
-						/>
-					</div>
-
-					{/* Mobile sidebar (slide-over) */}
-					<div
-						className={`md:hidden fixed inset-0 z-50 transition-opacity duration-200 ${
-							mobileMenuOpen
-								? "opacity-100 pointer-events-auto"
-								: "opacity-0 pointer-events-none"
-						}`}
-					>
-						{/* Backdrop */}
-						<div
-							className="absolute inset-0 bg-black/50"
-							onClick={() => setMobileMenuOpen(false)}
-							onKeyDown={(e) => {
-								if (e.key === "Escape") setMobileMenuOpen(false);
-							}}
-						/>
-						{/* Sidebar panel */}
-						<div
-							className={`relative w-64 h-full bg-sidebar border-r border-sidebar-border transition-transform duration-200 ${
-								mobileMenuOpen ? "translate-x-0" : "-translate-x-full"
-							}`}
-						>
-							<Sidebar
-								view={sidebarView}
-								sessions={sidebarSessions}
-								activeSessionId={activeSessionFile || undefined}
-								onSessionSelect={(id) => {
-									setSidebarView("chats");
-									handleSessionSelect(id);
-									setMobileMenuOpen(false);
-								}}
-								onNewSession={handleNewSession}
-								onDeleteSession={handleDeleteSession}
-								onChangeView={(view) => {
-									setSidebarView(view);
-									if (view === "settings") {
-										setShowSettings(true);
-									} else {
-										setShowSettings(false);
-									}
-								}}
-								onSend={handleSend}
-							/>
-						</div>
-					</div>
-				</>
+				<Sidebar
+					view={sidebarView}
+					sessions={sidebarSessions}
+					activeSessionId={activeSessionFile || undefined}
+					onSessionSelect={(id) => {
+						setSidebarView("chats");
+						handleSessionSelect(id);
+					}}
+					onNewSession={handleNewSession}
+					onDeleteSession={handleDeleteSession}
+					onChangeView={(view) => {
+						setSidebarView(view);
+						if (view === "settings") {
+							setShowSettings(true);
+						} else {
+							setShowSettings(false);
+						}
+					}}
+					onSend={handleSend}
+				/>
 			)}
 
 			{/* Main content */}
 			<div className="flex-1 flex flex-col min-w-0">
-				{/* Remote connection status (browser mode only) */}
-				<RemoteConnectionBar />
-
-				{/* Mobile top bar */}
-				{!showConnectModal && (
-					<MobileTopBar
-						title="Zosma Cowork"
-						subtitle={activeModelId ? (() => {
-							const m = models.find((mo) => mo.id === activeModelId);
-							return m?.name || activeModelId;
-						})() : undefined}
-						open={mobileMenuOpen}
-						onToggle={() => setMobileMenuOpen((prev) => !prev)}
-						onSettings={() => {
-							setSidebarView("settings");
-							setShowSettings(true);
-							setMobileMenuOpen(false);
-						}}
-					/>
-				)}
-
 				{/* Header bar */}
 				{!showConnectModal && (
-					<header className="hidden md:flex items-center justify-between px-4 py-2 border-b border-border shrink-0">
+					<header className="flex items-center justify-between px-4 py-2 border-b border-border shrink-0">
 						<div className="flex items-center gap-2">
 							<h1 className="text-sm font-semibold text-foreground">Zosma Cowork</h1>
 							<span className="text-xs text-muted-foreground">OpenCode Go</span>
@@ -541,7 +464,7 @@ function App() {
 				)}
 
 				{/* Content */}
-				<main className="flex-1 flex flex-col min-h-0 overflow-y-auto">
+				<main className="flex-1 flex flex-col min-h-0">
 					{showConnectModal ? (
 						<HomeView
 							onComplete={handleConnectComplete}
@@ -586,21 +509,6 @@ function App() {
 						/>
 					)}
 				</main>
-
-				{/* Mobile bottom nav */}
-				{!showConnectModal && !showSettings && (
-					<MobileBottomNav
-						view={sidebarView}
-						onChangeView={(view) => {
-							setSidebarView(view);
-							if (view === "settings") {
-								setShowSettings(true);
-							} else {
-								setShowSettings(false);
-							}
-						}}
-					/>
-				)}
 			</div>
 		</div>
 	);

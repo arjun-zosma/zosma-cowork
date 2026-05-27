@@ -23,24 +23,6 @@ import {
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Timeout configuration
-// ═══════════════════════════════════════════════════════════════════════════
-
-/**
- * Maximum time (ms) to wait for a single prompt to complete before aborting.
- * Prevents the UI from staying in "thinking" state indefinitely when the
- * agent loop hangs (e.g., on a non-responsive API call or stuck tool loop).
- * When this fires, the session is aborted and a "done" event is sent.
- */
-const PROMPT_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
-
-/**
- * Maximum time (ms) to wait for an individual streaming API request before
- * the HTTP client times out. Applied when no default is set in settings.
- */
-const PROVIDER_REQUEST_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 import {
 	AuthStorage,
 	DefaultResourceLoader,
@@ -57,10 +39,6 @@ import {
 	setExtensionEnabled,
 	uninstallExtension,
 } from "./extension-manager.js";
-import { eventBus } from "./event-bus.js";
-import { startRemoteServer, stopRemoteServer } from "./remote-server.js";
-import { commandQueue } from "./command-queue.js";
-import { extractChatMessages } from "./extract-chat-messages.js";
 // Vendored pi-anthropic-messages bridge (see scripts/prebuild.mjs). Without
 // this loaded as an extension, Claude Pro/Max OAuth requests are
 // fingerprinted by Anthropic as a "third-party app" and rejected with a
@@ -69,8 +47,6 @@ import { extractChatMessages } from "./extract-chat-messages.js";
 // canonical Claude CLI traffic. esbuild inlines this module into our
 // bundle; we never depend on jiti / typebox at runtime.
 import piAnthropicMessages from "./vendor/anthropic-messages/extensions/index.js";
-// Zosma Office Document Generation extension — registers 8 OfficeCLI tools.
-import zosmaOfficeDocs from "./office-docs/extension.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -90,7 +66,6 @@ interface PromptCommand {
 	type: "prompt";
 	id: string;
 	text: string;
-	_origin?: "remote";
 }
 
 interface AbortCommand {
@@ -248,23 +223,6 @@ interface FetchSkillPackumentCommand {
 	packageName: string;
 }
 
-interface StartRemoteCommand {
-	type: "start_remote";
-	id: string;
-	port?: number;
-	host?: string;
-}
-
-interface StopRemoteCommand {
-	type: "stop_remote";
-	id: string;
-}
-
-interface GetRemoteStatusCommand {
-	type: "get_remote_status";
-	id: string;
-}
-
 type Command =
 	| InitCommand
 	| GetModelsCommand
@@ -294,10 +252,7 @@ type Command =
 	| ListSkillsCommand
 	// | InstallSkillCommand — moved to Rust (lib.rs)
 	// | RemoveSkillCommand — moved to Rust (lib.rs)
-	| FetchSkillPackumentCommand
-	| StartRemoteCommand
-	| StopRemoteCommand
-	| GetRemoteStatusCommand;
+	| FetchSkillPackumentCommand;
 
 // ---------------------------------------------------------------------------
 // Logger (stderr — never interferes with stdout protocol)
@@ -312,36 +267,6 @@ function log(...args: unknown[]) {
 // ---------------------------------------------------------------------------
 
 function send(obj: unknown) {
-	// Broadcast to EventBus subscribers (e.g., WebSocket remote clients)
-	// before writing to stdout. This ensures remote clients receive events
-	// even when stdout is piped to the Tauri backend.
-	const busEvent = obj as {
-		type: string;
-		id?: string;
-		data?: unknown;
-		message?: string;
-		event?: unknown;
-	};
-	if (busEvent.type === "event") {
-		eventBus.publish({ type: "event", data: busEvent });
-	} else if (busEvent.type === "result") {
-		eventBus.publish({
-			type: "result",
-			id: busEvent.id || "",
-			data: busEvent.data,
-		});
-	} else if (busEvent.type === "done") {
-		eventBus.publish({ type: "done", id: busEvent.id || "" });
-	} else if (busEvent.type === "error") {
-		eventBus.publish({
-			type: "error",
-			id: busEvent.id || "",
-			message: busEvent.message || "",
-		});
-	} else if (busEvent.type === "ready") {
-		eventBus.publish({ type: "ready" });
-	}
-
 	try {
 		process.stdout.write(`${JSON.stringify(obj)}\n`);
 	} catch (err) {
@@ -401,17 +326,6 @@ function cleanStaleLocks(dir: string): void {
 		}
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Remote session state
-// ---------------------------------------------------------------------------
-
-/**
- * Tracks the session file for the current remote conversation.
- * Created on the first remote prompt, updated on subsequent ones.
- */
-let remoteSessionFile: string | null = null;
-let remoteSessionFirstTs: number = 0;
 
 // ---------------------------------------------------------------------------
 // Session persistence helpers
@@ -732,15 +646,8 @@ async function main() {
 		modelRegistry = ModelRegistry.create(authStorage, modelsPath);
 
 		// Settings — in-memory for now, minimal config
-		// Set a default provider timeout so API calls never hang indefinitely
 		settingsManager = SettingsManager.inMemory({
 			compaction: { enabled: false },
-			retry: {
-				provider: {
-					timeoutMs: PROVIDER_REQUEST_TIMEOUT_MS,
-					maxRetries: 3,
-				},
-			},
 		});
 
 		// Resource loader — discovers extensions, skills, prompts from
@@ -753,7 +660,7 @@ async function main() {
 			cwd: process.cwd(),
 			agentDir,
 			settingsManager,
-			extensionFactories: [piAnthropicMessages, zosmaOfficeDocs],
+			extensionFactories: [piAnthropicMessages],
 		});
 		await resourceLoader.reload();
 		// Surface any extension-load errors — they're silently collected by
@@ -827,13 +734,24 @@ async function main() {
 		log("Sidecar ready — %d models available", models.length);
 	}
 
-	/// Processes a single command through the sidecar's command switch.
-	/// Extracted so both stdin lines and queued remote commands use the
-	/// same dispatch logic.
-	async function handleCommand(cmd: Command): Promise<void> {
+	// Process stdin commands
+	const rl = createInterface({ input: process.stdin, crlfDelay: Number.POSITIVE_INFINITY });
+
+	for await (const line of rl) {
+		if (!line.trim()) continue;
+
+		let cmd: Command;
+		try {
+			cmd = JSON.parse(line);
+		} catch {
+			log("Invalid JSON: %s", line.slice(0, 100));
+			continue;
+		}
+
 		log("Command: type=%s id=%s", cmd.type, "id" in cmd ? cmd.id : "-");
 
-		switch (cmd.type) {
+		try {
+			switch (cmd.type) {
 				// ── init ───────────────────────────────────────────────────
 				case "init": {
 					await initAgent(cmd.zosmaDir ?? defaultZosmaDir());
@@ -868,80 +786,17 @@ async function main() {
 					const promptModel = session.model;
 					log("prompt: using model %s/%s", promptModel?.provider, promptModel?.id);
 					activePromptId = cmd.id;
-
-					// Auto-abort timeout: prevents the UI from staying in "thinking"
-					// state indefinitely when a prompt hangs (e.g. streaming request
-					// interrupted, API unresponsive, tool loop stuck). The timeout
-					// calls session.abort() which triggers the agent's abort signal,
-					// cancelling the active streaming request or tool execution. The
-					// agent loop then terminates with "aborted" stop reason and
-					// session.prompt() resolves, allowing the "done" event to be sent.
-					const abortTimeout = setTimeout(() => {
-						log(
-							"prompt: timeout after %dms — aborting session",
-							PROMPT_TIMEOUT_MS,
-						);
-						// Abort the active agent run (cancels streaming HTTP request
-						// or tool execution). The agent loop will detect the abort
-						// signal and terminate with "aborted" stop reason.
-						try {
-							session!.abort();
-						} catch {
-							// ignore if session already completed
-						}
-					}, PROMPT_TIMEOUT_MS);
-
-					const isRemote = cmd._origin === "remote";
-
 					try {
 						await session.prompt(cmd.text);
 					} catch (err) {
 						// Surface SDK errors back to the UI instead of swallowing them
 						// silently with just a "done" event.
 						const msg = err instanceof Error ? err.message : String(err);
-						log("prompt: %s", msg);
+						log("prompt error: %s", msg);
 						send({ type: "error", id: cmd.id, message: msg });
 					} finally {
-						clearTimeout(abortTimeout);
 						send({ type: "done", id: cmd.id });
 						activePromptId = null;
-
-						// Persist session to shared store so the desktop UI sees it
-						if (isRemote && session) {
-							try {
-								if (
-									session.agent?.state?.messages &&
-									Array.isArray(session.agent.state.messages)
-								) {
-									// Create session ID on first remote prompt
-									if (!remoteSessionFile) {
-										remoteSessionFirstTs = Date.now();
-										remoteSessionFile = `remote-${remoteSessionFirstTs}`;
-									}
-
-									const chatMessages = extractChatMessages(
-										session.agent.state.messages as unknown[],
-									);
-									if (chatMessages.length > 0) {
-										saveSession(
-											zosmaDir,
-											remoteSessionFile,
-											"Remote Chat",
-											chatMessages,
-											session.model?.id,
-											session.model?.provider,
-										);
-										log(
-											"Saved remote session: %s (%d messages)",
-											remoteSessionFile,
-											chatMessages.length,
-										);
-									}
-								}
-							} catch (err) {
-								log("Failed to save remote session: %s", err);
-							}
-						}
 					}
 					break;
 				}
@@ -1055,30 +910,10 @@ async function main() {
 									});
 								},
 								onPrompt: async (prompt) => {
-									// Some providers (notably GitHub Copilot) ask for a
-									// GitHub Enterprise URL during the OAuth flow with a
-									// "blank for github.com" affordance. There's no input
-									// surface in the desktop UI for this, so accept the
-									// blank default. Any prompt whose placeholder reads as
-									// "blank for <something>" or "default <something>" is
-									// safe to default — the SDK validates the result and
-									// will report a clear error if the empty answer is
-									// rejected. Everything else still throws.
-									const msg = String(prompt.message ?? "").trim();
-									const placeholder = String(prompt.placeholder ?? "").trim();
-									const blankIsValid =
-										/blank for|default[: ]/i.test(placeholder) ||
-										/enterprise/i.test(msg);
-									if (blankIsValid) {
-										log(
-											"OAuth prompt auto-answered with empty (message=%s, placeholder=%s)",
-											msg,
-											placeholder,
-										);
-										return "";
-									}
+									// Not expected for browser-flow OAuth; reject so the
+									// SDK surfaces a clear error instead of hanging.
 									throw new Error(
-										`Interactive prompts are not supported in the desktop OAuth flow (message: ${msg})`,
+										`Interactive prompts are not supported in the desktop OAuth flow (message: ${prompt.message})`,
 									);
 								},
 								onProgress: (message) => {
@@ -1507,48 +1342,6 @@ async function main() {
 					break;
 				}
 
-				// ── start_remote (HTTP/WS remote access server) ────────────────
-				case "start_remote": {
-					const rc = cmd as StartRemoteCommand;
-					try {
-						const port = rc.port || 8765;
-						const host = rc.host || "127.0.0.1";
-						startRemoteServer(zosmaDir, { port, host });
-						send({ type: "result", id: rc.id, data: { port, host, running: true } });
-					} catch (err) {
-						const message = err instanceof Error ? err.message : String(err);
-						log("start_remote error: %s", message);
-						send({ type: "error", id: rc.id, message });
-					}
-					break;
-				}
-
-				// ── stop_remote ────────────────────────────────────────────────
-				case "stop_remote": {
-					const rc = cmd as StopRemoteCommand;
-					try {
-						stopRemoteServer();
-						send({ type: "result", id: rc.id, data: { running: false } });
-					} catch (err) {
-						const message = err instanceof Error ? err.message : String(err);
-						log("stop_remote error: %s", message);
-						send({ type: "error", id: rc.id, message });
-					}
-					break;
-				}
-
-				// ── get_remote_status ────────────────────────────────────────────
-				case "get_remote_status": {
-					const { getRemoteStatus } = await import("./remote-server.js");
-					try {
-						const status = getRemoteStatus();
-						send({ type: "result", id: cmd.id, data: status });
-					} catch {
-						send({ type: "result", id: cmd.id, data: { running: false } });
-					}
-					break;
-				}
-
 				// Skill install/remove handled directly in Rust (lib.rs) — no npx needed.
 				// case "install_skill" and case "remove_skill" removed from sidecar.
 
@@ -1559,52 +1352,6 @@ async function main() {
 						message: `Unknown command: ${(cmd as Command).type}`,
 					});
 			}
-	}
-
-	// ── Remote command queue processor ────────────────────────────────
-	// The remote server (HTTP/WebSocket) enqueues commands into commandQueue
-	// when mobile users send prompts. These must be processed independently
-	// of stdin activity — the main loop below only drains the queue after
-	// each stdin line, which means queued commands never fire if the Tauri
-	// backend stays idle. This interval polls the queue every 100ms so
-	// remote commands always get dispatched promptly.
-	let queueCheckHandle: ReturnType<typeof setInterval> | null = null;
-	function startQueueProcessor() {
-		if (queueCheckHandle) return;
-		queueCheckHandle = setInterval(() => {
-			while (commandQueue.hasPending()) {
-				const qCmd = commandQueue.dequeue()!;
-				handleCommand(qCmd as Command).catch((err: unknown) => {
-					const msg = err instanceof Error ? err.message : String(err);
-					log("Queue processor error: %s", msg);
-					send({
-						type: "error",
-						id: qCmd.id || "unknown",
-						message: msg,
-					});
-				});
-			}
-		}, 100);
-	}
-
-	startQueueProcessor();
-
-	// Process stdin commands
-	const rl = createInterface({ input: process.stdin, crlfDelay: Number.POSITIVE_INFINITY });
-
-	for await (const line of rl) {
-		if (!line.trim()) continue;
-
-		let cmd: Command;
-		try {
-			cmd = JSON.parse(line);
-		} catch {
-			log("Invalid JSON: %s", line.slice(0, 100));
-			continue;
-		}
-
-		try {
-			await handleCommand(cmd);
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err);
 			log("Error: %s", message);
@@ -1618,26 +1365,9 @@ async function main() {
 				activePromptId = null;
 			}
 		}
-
-		// Process any commands queued by the remote server (HTTP/WebSocket)
-		while (commandQueue.hasPending()) {
-			const qCmd = commandQueue.dequeue()!;
-			try {
-				await handleCommand(qCmd as Command);
-			} catch (err) {
-				const message = err instanceof Error ? err.message : String(err);
-				log("Queue error: %s", message);
-				send({
-					type: "error",
-					id: qCmd.id || "unknown",
-					message,
-				});
-			}
-		}
 	}
 
 	log("Sidecar shutting down (stdin closed)");
-	if (queueCheckHandle) clearInterval(queueCheckHandle);
 	process.exit(0);
 }
 

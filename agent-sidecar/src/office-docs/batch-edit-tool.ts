@@ -1,28 +1,30 @@
-import { type Static, Type } from "typebox";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { type Static, Type } from "typebox";
 import { getOfficeCLIExecutor } from "./officecli-executor.js";
 import { OfficeCLIError } from "./tool-types.js";
 
 const BatchAction = Type.Object({
 	action: Type.Union(
-		[Type.Literal("add"), Type.Literal("set"), Type.Literal("remove"), Type.Literal("move"), Type.Literal("swap")],
+		[
+			Type.Literal("add"),
+			Type.Literal("set"),
+			Type.Literal("remove"),
+			Type.Literal("move"),
+			Type.Literal("swap"),
+		],
 		{ description: "Operation to perform" },
 	),
 	domPath: Type.String({ description: "Target DOM path" }),
 	targetDomPath: Type.Optional(
 		Type.String({ description: "Destination DOM path (for move/swap)" }),
 	),
-	element: Type.Optional(
-		Type.String({ description: "Element type (for add)" }),
-	),
+	element: Type.Optional(Type.String({ description: "Element type (for add)" })),
 	properties: Type.Optional(
 		Type.Record(Type.String(), Type.Unknown(), {
 			description: "Element properties",
 		}),
 	),
-	content: Type.Optional(
-		Type.String({ description: "Text content" }),
-	),
+	content: Type.Optional(Type.String({ description: "Text content" })),
 });
 
 export const BatchEditParams = Type.Object({
@@ -40,9 +42,7 @@ export const BatchEditParams = Type.Object({
 
 export type TBatchEditParams = Static<typeof BatchEditParams>;
 
-export function createBatchEditTool(): ToolDefinition<
-	typeof BatchEditParams
-> {
+export function createBatchEditTool(): ToolDefinition<typeof BatchEditParams> {
 	return {
 		name: "batch_edit",
 		label: "Batch Edit",
@@ -55,8 +55,7 @@ export function createBatchEditTool(): ToolDefinition<
 			"Each action specifies an operation and its parameters.",
 			"Actions execute in order within one save cycle.",
 		].join("\n"),
-		promptSnippet:
-			"Execute multiple document operations atomically in one save cycle.",
+		promptSnippet: "Execute multiple document operations atomically in one save cycle.",
 		promptGuidelines: [
 			"Use batch_edit instead of multiple add_element/set_element calls for better performance.",
 			"Actions execute in order — later actions can reference earlier additions.",
@@ -74,9 +73,7 @@ export function createBatchEditTool(): ToolDefinition<
 				});
 
 				if (result.failed > 0) {
-					const errorLines = result.errors.map(
-						(e) => `  [${e.index}] ${e.action}: ${e.error}`,
-					);
+					const errorLines = result.errors.map((e) => `  [${e.index}] ${e.action}: ${e.error}`);
 					return {
 						content: [
 							{

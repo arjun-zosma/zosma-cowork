@@ -1,0 +1,7 @@
+#!/bin/bash
+# Placeholder for bundled Node.js binary.
+# In production builds, this is replaced by the actual Node.js binary
+# via src-tauri/scripts/fetch-node.mjs (run during beforeBuildCommand).
+# In dev mode, the Rust code falls back to system Node.js automatically.
+echo "Error: Bundled Node.js not found. Run 'tauri build' for production." >&2
+exit 1

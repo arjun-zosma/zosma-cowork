@@ -109,54 +109,13 @@ fn find_sidecar_path(app: &tauri::AppHandle) -> PathBuf {
         }
     }
 
-    // Try relative to the current executable (works for portable installs,
-    // manual unpack, or any non-standard layout).
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(exe_dir) = exe.parent() {
-            let rel_path = exe_dir.join("../lib/zosma-cowork/agent-sidecar/index.cjs");
-            if rel_path.exists() {
-                return rel_path;
-            }
-            // Also try plain relative (e.g. portable extraction)
-            let plain_path = exe_dir.join("agent-sidecar/index.cjs");
-            if plain_path.exists() {
-                return plain_path;
-            }
-        }
-    }
-
-    // Last resort — dev fallback (only useful during development)
+    // Last resort — dev fallback
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
         .join("agent-sidecar")
         .join("src")
         .join("index.ts")
-}
-
-/// Pick the first candidate that exists and is NOT a `#!`-shebang shim.
-/// `fetch-node.mjs` writes shell-script placeholders for variants it
-/// didn't download; spawning one of those gives EPIPE on the next write.
-fn pick_real_node(candidates: &[PathBuf]) -> Option<PathBuf> {
-    use std::io::Read;
-    for p in candidates {
-        if !p.exists() {
-            continue;
-        }
-        let mut buf = [0u8; 2];
-        match std::fs::File::open(p).and_then(|mut f| f.read(&mut buf).map(|n| (n, buf))) {
-            Ok((2, [b'#', b'!'])) => {
-                log::warn!("Skipping shim Node.js placeholder: {:?}", p);
-                continue;
-            }
-            Ok(_) => return Some(p.clone()),
-            Err(e) => {
-                log::warn!("Failed to read Node.js candidate {:?}: {}", p, e);
-                continue;
-            }
-        }
-    }
-    None
 }
 
 fn find_node(app: &tauri::AppHandle) -> PathBuf {
@@ -170,45 +129,67 @@ fn find_node(app: &tauri::AppHandle) -> PathBuf {
     // 2. Try bundled Node.js in app resources (production builds)
     // In production, Tauri bundles Node.js as a resource.
     // macOS universal builds ship both node-arm64 and node-x64.
-    //
-    // fetch-node.mjs creates `#!/bin/bash; exit 1` shim placeholders for
-    // any variants it didn't download (so Tauri's resource validation
-    // passes). Spawning a shim succeeds at the OS level but the shim
-    // immediately exits, leaving the next write_all() to its stdin with
-    // EPIPE ("Broken pipe (os error 32)"). Use `pick_real_node` to skip
-    // shims by sniffing the first two bytes for a shebang.
     if !cfg!(debug_assertions) {
         if let Ok(resource_dir) = app.path().resource_dir() {
             let binaries_dir = resource_dir.join("binaries");
 
             #[cfg(target_os = "windows")]
-            let candidates = [binaries_dir.join("node"), binaries_dir.join("node.exe")];
+            {
+                // During Windows builds, fetch-node.mjs copies node.exe → node
+                // so the Tauri resource entry "binaries/node" works cross-platform.
+                // Check "node" first (Tauri-bundled), then "node.exe" (direct copy).
+                let bundled_path = binaries_dir.join("node");
+                if bundled_path.exists() {
+                    log::info!("Using bundled Node.js: {:?}", bundled_path);
+                    return bundled_path;
+                }
+                let bundled_exe = binaries_dir.join("node.exe");
+                if bundled_exe.exists() {
+                    log::info!("Using bundled Node.js: {:?}", bundled_exe);
+                    return bundled_exe;
+                }
+            }
 
             #[cfg(target_os = "macos")]
-            let candidates = {
+            {
+                // Universal builds: pick the right arch at runtime
                 let current_arch = std::process::Command::new("uname")
                     .arg("-m")
                     .output()
                     .ok()
                     .and_then(|o| String::from_utf8(o.stdout).ok())
                     .unwrap_or_default();
-                let arch_specific = if current_arch.starts_with("arm") {
-                    binaries_dir.join("node-arm64")
+
+                if current_arch.starts_with("arm") {
+                    // Apple Silicon — use arm64 binary
+                    let bundled_path = binaries_dir.join("node-arm64");
+                    if bundled_path.exists() {
+                        log::info!("Using bundled Node.js (arm64): {:?}", bundled_path);
+                        return bundled_path;
+                    }
                 } else {
-                    binaries_dir.join("node-x64")
-                };
-                // Try the arch-specific name first (correct for universal
-                // builds), then the generic `node` (correct for single-arch
-                // builds where the arch-specific name was a shim).
-                [arch_specific, binaries_dir.join("node")]
-            };
+                    // Intel — use x64 binary
+                    let bundled_path = binaries_dir.join("node-x64");
+                    if bundled_path.exists() {
+                        log::info!("Using bundled Node.js (x64): {:?}", bundled_path);
+                        return bundled_path;
+                    }
+                }
+                // Fallback to generic "node"
+                let bundled_path = binaries_dir.join("node");
+                if bundled_path.exists() {
+                    log::info!("Using bundled Node.js: {:?}", bundled_path);
+                    return bundled_path;
+                }
+            }
 
             #[cfg(target_os = "linux")]
-            let candidates = [binaries_dir.join("node")];
-
-            if let Some(real) = pick_real_node(&candidates) {
-                log::info!("Using bundled Node.js: {:?}", real);
-                return real;
+            {
+                let bundled_path = binaries_dir.join("node");
+                if bundled_path.exists() {
+                    log::info!("Using bundled Node.js: {:?}", bundled_path);
+                    return bundled_path;
+                }
             }
         }
     }
@@ -307,24 +288,6 @@ async fn spawn_sidecar(
     for a in &run_args {
         c.arg(a);
     }
-    // macOS GUI apps launched via Finder don't inherit a terminal's env
-    // vars, and our bundled Node 24's stock CA bundle doesn't include
-    // corporate MITM root certs (ZScaler / Cloudflare WARP / Fortinet /
-    // etc.). `--use-system-ca` (Node 22.4+) makes Node consult the OS
-    // trust store — macOS keychain, Windows cert store, Linux
-    // ca-certificates — in addition to its built-in CAs, so any root the
-    // browser already trusts becomes valid for OAuth token exchange too.
-    // Falls back gracefully when the OS store has no extras. Preserve any
-    // pre-existing NODE_OPTIONS the user has set.
-    let existing_node_opts = std::env::var("NODE_OPTIONS").unwrap_or_default();
-    let node_options = if existing_node_opts.contains("--use-system-ca") {
-        existing_node_opts
-    } else if existing_node_opts.is_empty() {
-        "--use-system-ca".to_string()
-    } else {
-        format!("{existing_node_opts} --use-system-ca")
-    };
-    c.env("NODE_OPTIONS", node_options);
     c.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
@@ -1221,47 +1184,6 @@ async fn remove_skill(name: String, _s: State<'_, AppState>) -> Result<Value, St
     Err(format!("Skill '{}' not found in {:?}", name, skills_dir))
 }
 
-// ── Remote Access (Phase 6.0) ──────────────────────────────────
-
-#[tauri::command]
-async fn start_remote_server(
-    port: Option<u16>,
-    host: Option<String>,
-    s: State<'_, AppState>,
-) -> Result<Value, String> {
-    scmd_r(
-        &s,
-        &serde_json::json!({
-            "type": "start_remote",
-            "id": "sr",
-            "port": port.unwrap_or(8765),
-            "host": host.unwrap_or_else(|| "127.0.0.1".to_string()),
-        }),
-        std::time::Duration::from_secs(10),
-    )
-    .await
-}
-
-#[tauri::command]
-async fn stop_remote_server(s: State<'_, AppState>) -> Result<Value, String> {
-    scmd_r(
-        &s,
-        &serde_json::json!({"type": "stop_remote", "id": "sr"}),
-        std::time::Duration::from_secs(10),
-    )
-    .await
-}
-
-#[tauri::command]
-async fn get_remote_status(s: State<'_, AppState>) -> Result<Value, String> {
-    scmd_r(
-        &s,
-        &serde_json::json!({"type": "get_remote_status", "id": "grs"}),
-        std::time::Duration::from_secs(10),
-    )
-    .await
-}
-
 #[tauri::command]
 async fn write_user_file(path: String, content: String) -> Result<(), String> {
     tokio::fs::write(&path, &content)
@@ -1401,9 +1323,6 @@ pub fn run() {
             list_skills,
             install_skill,
             remove_skill,
-            start_remote_server,
-            stop_remote_server,
-            get_remote_status,
             write_user_file,
             open_url,
             crate::analytics::track_analytics_event,

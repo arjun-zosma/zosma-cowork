@@ -7,7 +7,7 @@
  * Flow: splash → connect (API key prompt + OAuth provider cards)
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { ProviderAuthSection } from "./ProviderAuthSection";
 
 interface OnboardingProps {
@@ -57,14 +57,6 @@ export function HomeView({
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
-	const [appVersion, setAppVersion] = useState<string | null>(null);
-
-	// Load app version from Tauri
-	useEffect(() => {
-		import("@tauri-apps/api/app")
-			.then(({ getVersion }) => getVersion().then(setAppVersion))
-			.catch(() => {}); // ignore if not in Tauri env
-	}, []);
 
 	const handleSave = useCallback(async () => {
 		const trimmed = apiKey.trim();
@@ -74,18 +66,7 @@ export function HomeView({
 		try {
 			await onComplete(trimmed);
 		} catch (err) {
-			const msg = err instanceof Error ? err.message : "Failed to save API key";
-			// Check for common sidecar/connection failures and show a clearer message
-			if (msg === "no sidecar" || msg.includes("ERR_MODULE_NOT_FOUND")) {
-				setError(
-					"The AI engine is not running. If you installed from a package manager, try upgrading: " +
-						"'yay -S zosma-cowork-bin' or download the latest release from zosma.ai",
-				);
-			} else if (msg === "not ready" || msg === "timeout") {
-				setError("Waiting for the AI engine to start. Please try again in a moment.");
-			} else {
-				setError(msg);
-			}
+			setError(err instanceof Error ? err.message : "Failed to save API key");
 		} finally {
 			setSaving(false);
 		}
@@ -98,7 +79,7 @@ export function HomeView({
 	// ── Splash ──────────────────────────────────────────────────
 	if (step === "splash") {
 		return (
-			<div className="flex flex-col items-center justify-center h-full px-8 py-12 max-w-lg mx-auto overflow-y-auto">
+			<div className="flex flex-col items-center justify-center h-full px-8 py-12 max-w-lg mx-auto">
 				{/* Logo */}
 				<div className="mb-6">
 					<div
@@ -125,17 +106,9 @@ export function HomeView({
 				<p className="text-xs text-center mb-1" style={{ color: "hsl(var(--muted-foreground))" }}>
 					🇮🇳 India's first Non-Coding Agentic Work Harness
 				</p>
-				<p className="text-base text-center mb-2" style={{ color: "hsl(var(--muted-foreground))" }}>
-					Your Coworker, always on.
+				<p className="text-base text-center mb-8" style={{ color: "hsl(var(--muted-foreground))" }}>
+					Your AI pair programmer, always in sync.
 				</p>
-				{appVersion && (
-					<p
-						className="text-xs text-center mb-6"
-						style={{ color: "hsl(var(--muted-foreground) / 0.5)" }}
-					>
-						v{appVersion}
-					</p>
-				)}
 
 				{/* Feature highlights */}
 				<div className="w-full space-y-2.5 mb-8">
@@ -144,7 +117,7 @@ export function HomeView({
 						text="Connect to any AI — Claude, ChatGPT, Copilot, OpenAI, or local models"
 					/>
 					<FeatureRow icon="🧩" text="All pi extensions, skills & themes work out of the box" />
-					<FeatureRow icon="🔒" text="Your data stays local — nothing leaves your machine" />
+					<FeatureRow icon="🔒" text="Your code stays local — no data leaves your machine" />
 					<FeatureRow icon="🆓" text="100% free & open-source — no subscriptions, no caps" />
 					<FeatureRow
 						icon="👥"
@@ -195,13 +168,13 @@ export function HomeView({
 
 	// ── Connect ─────────────────────────────────────────────────
 	return (
-		<div className="relative h-full w-full overflow-y-auto">
+		<div className="relative h-full w-full">
 			{onDismiss && (
 				<button
 					type="button"
 					onClick={onDismiss}
 					aria-label={hasSubscription ? "Continue" : "Skip"}
-					className="sticky top-4 float-right mr-4 z-20 text-xs font-medium px-3 py-1.5 rounded-full transition-colors cursor-pointer hover:opacity-90"
+					className="absolute top-4 right-4 z-20 text-xs font-medium px-3 py-1.5 rounded-full transition-colors cursor-pointer hover:opacity-90"
 					style={{
 						background: hasSubscription ? "hsl(var(--primary))" : "hsl(var(--muted))",
 						color: hasSubscription
@@ -212,7 +185,7 @@ export function HomeView({
 					{hasSubscription ? "Continue →" : "Skip"}
 				</button>
 			)}
-			<div className="w-full">
+			<div className="h-full w-full overflow-y-auto">
 				<div className="flex flex-col items-center px-8 py-8 max-w-lg mx-auto">
 					<h1 className="text-xl font-bold mb-1" style={{ color: "hsl(var(--foreground))" }}>
 						Connect your AI

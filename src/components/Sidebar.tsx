@@ -37,23 +37,21 @@ export function Sidebar({
 	const isTemplates = view === "templates";
 
 	return (
-		<div className="w-64 bg-sidebar border-r border-sidebar-border flex flex-col h-full">
-			{/* Content area — scrollable */}
-			<div className="flex-1 min-h-0 overflow-y-auto">
-				{isTemplates && onSend ? (
-					<PromptTemplates onSend={onSend} />
-				) : (
-					<ConversationSearch
-						sessions={sessions}
-						activeSessionId={activeSessionId}
-						onSelect={onSessionSelect}
-						onNewSession={onNewSession}
-						onDeleteSession={onDeleteSession}
-					/>
-				)}
-			</div>
+		<div className="w-64 bg-sidebar border-r border-sidebar-border flex flex-col">
+			{/* Content area */}
+			{isTemplates && onSend ? (
+				<PromptTemplates onSend={onSend} />
+			) : (
+				<ConversationSearch
+					sessions={sessions}
+					activeSessionId={activeSessionId}
+					onSelect={onSessionSelect}
+					onNewSession={onNewSession}
+					onDeleteSession={onDeleteSession}
+				/>
+			)}
 
-			{/* Bottom tab bar — always visible */}
+			{/* Bottom tab bar */}
 			<div className="shrink-0 border-t border-sidebar-border flex items-center justify-around px-2 py-1.5">
 				<TabButton
 					icon={MessageSquare}

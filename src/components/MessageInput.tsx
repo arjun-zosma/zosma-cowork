@@ -1,7 +1,7 @@
 import { usePasteDetection } from "@/hooks/usePasteDetection";
 import { trackEvent } from "@/lib/telemetry";
 import type { ModelInfo } from "@/types";
-import { Mic, Paperclip, X } from "lucide-react";
+import { Paperclip, X } from "lucide-react";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { ModelSelector } from "./ModelSelector";
 
@@ -22,10 +22,8 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(
 	({ onSend, disabled, modelLabel, models, currentModelId, onModelSelect }, ref) => {
 		const [text, setText] = useState("");
 		const [attachedFiles, setAttachedFiles] = useState<{ path: string; name: string }[]>([]);
-		const [isListening, setIsListening] = useState(false);
 		const { pastedImages, pasteHandler, clearImages } = usePasteDetection();
 		const textareaRef = useRef<HTMLTextAreaElement>(null);
-		const recognitionRef = useRef<SpeechRecognition | null>(null);
 
 		useImperativeHandle(ref, () => ({
 			focus: () => textareaRef.current?.focus(),
@@ -39,46 +37,6 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(
 			textarea.style.height = "auto";
 			textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
 		}, [text]);
-
-		const startVoiceInput = useCallback(() => {
-			const SpeechRecognition =
-				(window as unknown as { SpeechRecognition?: new () => SpeechRecognition })
-					.SpeechRecognition ||
-				(window as unknown as { webkitSpeechRecognition?: new () => SpeechRecognition })
-					.webkitSpeechRecognition;
-			if (!SpeechRecognition) return;
-
-			if (isListening && recognitionRef.current) {
-				recognitionRef.current.stop();
-				setIsListening(false);
-				return;
-			}
-
-			const recognition = new SpeechRecognition();
-			recognition.lang = "en-US";
-			recognition.interimResults = true;
-			recognition.continuous = false;
-
-			recognition.onresult = (event: SpeechRecognitionEvent) => {
-				const transcript = Array.from(event.results)
-					.map((r) => r[0].transcript)
-					.join("");
-				setText((prev) => prev + transcript);
-			};
-
-			recognition.onend = () => {
-				setIsListening(false);
-			};
-
-			recognition.onerror = () => {
-				setIsListening(false);
-			};
-
-			recognitionRef.current = recognition;
-			recognition.start();
-			setIsListening(true);
-			trackEvent("voice_input_started");
-		}, [isListening]);
 
 		const openFileDialog = useCallback(async () => {
 			try {
@@ -173,8 +131,6 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(
 						placeholder={placeholder}
 						rows={1}
 						disabled={disabled}
-						enterKeyHint="send"
-						inputMode="text"
 						className="w-full resize-none rounded-t-2xl bg-transparent px-4 pt-3 pb-2 text-foreground placeholder:text-muted-foreground focus:outline-none disabled:opacity-50"
 					/>
 
@@ -244,24 +200,9 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(
 								onClick={openFileDialog}
 								disabled={disabled}
 								aria-label="Attach files"
-								className="md:rounded-lg p-2 md:p-1.5 text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
-								style={{ minWidth: 44, minHeight: 44 }}
+								className="rounded-lg p-1.5 text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
 							>
-								<Paperclip size={18} />
-							</button>
-							<button
-								type="button"
-								onClick={startVoiceInput}
-								disabled={disabled}
-								aria-label={isListening ? "Stop recording" : "Voice input"}
-								className={`md:rounded-lg p-2 md:p-1.5 transition-colors disabled:opacity-50 ${
-									isListening
-										? "text-red-500 hover:text-red-400"
-										: "text-muted-foreground hover:text-foreground"
-								}`}
-								style={{ minWidth: 44, minHeight: 44 }}
-							>
-								<Mic size={18} />
+								<Paperclip size={16} />
 							</button>
 							{models && onModelSelect ? (
 								<ModelSelector
@@ -281,7 +222,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(
 								disabled ||
 								(!text.trim() && attachedFiles.length === 0 && pastedImages.length === 0)
 							}
-							className="px-5 md:px-4 py-2.5 md:py-1.5 rounded-lg text-xs font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-90"
+							className="px-4 py-1.5 rounded-lg text-xs font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-90"
 							style={{
 								background: "hsl(var(--primary))",
 								color: "hsl(var(--primary-foreground))",

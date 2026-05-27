@@ -48,8 +48,6 @@ interface Props {
 export function ProviderAuthSection({ provider, compact = false, onChange }: Props) {
 	const [phase, setPhase] = useState<Phase>("idle");
 	const [statusMessage, setStatusMessage] = useState<string | null>(null);
-	const [userCode, setUserCode] = useState<string | null>(null);
-	const [verificationUrl, setVerificationUrl] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
 
@@ -99,28 +97,16 @@ export function ProviderAuthSection({ provider, compact = false, onChange }: Pro
 		let unlisteners: UnlistenFn[] = [];
 		(async () => {
 			unlisteners = await Promise.all([
-				listen<{ provider: string; url: string; instructions?: string }>(
-					"oauth_open_url",
-					(e) => {
-						if (e.payload?.provider !== provider) return;
-						setPhase("waiting_browser");
-						// GitHub Copilot uses the device-flow and passes the 8-char user
-						// code as `"Enter code: ABCD-1234"`. Extract and surface it so the
-						// user can paste it into github.com/login/device. Loopback-redirect
-						// providers (Anthropic, OpenAI Codex) pass freeform instructions
-						// without a code — fall back to a plain "Opening browser…".
-						const ins = e.payload.instructions ?? null;
-						const m = ins?.match(/([A-Z0-9]{4}-?[A-Z0-9]{4})/);
-						setStatusMessage(m ? "Authorize this device in your browser:" : "Opening browser…");
-						setUserCode(m ? m[1] : null);
-						setVerificationUrl(m ? e.payload.url : null);
-						invoke("open_url", { url: e.payload.url }).catch(() => {
-							// As a fallback, force a window.open which will likely be blocked
-							// in Tauri but at least surfaces the URL in dev tools.
-							window.open(e.payload.url, "_blank");
-						});
-					},
-				),
+				listen<{ provider: string; url: string }>("oauth_open_url", (e) => {
+					if (e.payload?.provider !== provider) return;
+					setPhase("waiting_browser");
+					setStatusMessage("Opening browser…");
+					invoke("open_url", { url: e.payload.url }).catch(() => {
+						// As a fallback, force a window.open which will likely be blocked
+						// in Tauri but at least surfaces the URL in dev tools.
+						window.open(e.payload.url, "_blank");
+					});
+				}),
 				listen<{ provider: string; message: string }>("oauth_progress", (e) => {
 					if (e.payload?.provider !== provider) return;
 					setStatusMessage(e.payload.message);
@@ -132,8 +118,6 @@ export function ProviderAuthSection({ provider, compact = false, onChange }: Pro
 					if (e.payload?.provider !== provider) return;
 					setPhase("done");
 					setStatusMessage(null);
-					setUserCode(null);
-					setVerificationUrl(null);
 					setError(null);
 					// Optimistic local update so the button flips to "Sign Out"
 					// immediately, independent of any race or silent failure in
@@ -156,16 +140,12 @@ export function ProviderAuthSection({ provider, compact = false, onChange }: Pro
 					if (e.payload?.provider !== provider) return;
 					setPhase("idle");
 					setStatusMessage(null);
-					setUserCode(null);
-					setVerificationUrl(null);
 					setError(e.payload.error ?? "Sign-in failed");
 				}),
 				listen<{ provider: string }>("oauth_cancelled", (e) => {
 					if (e.payload?.provider !== provider) return;
 					setPhase("idle");
 					setStatusMessage(null);
-					setUserCode(null);
-					setVerificationUrl(null);
 					setError(null);
 				}),
 			]);
@@ -183,8 +163,6 @@ export function ProviderAuthSection({ provider, compact = false, onChange }: Pro
 
 	const handleSignIn = useCallback(async () => {
 		setError(null);
-		setUserCode(null);
-		setVerificationUrl(null);
 		setPhase("starting");
 		setStatusMessage("Starting sign-in…");
 		try {
@@ -211,8 +189,6 @@ export function ProviderAuthSection({ provider, compact = false, onChange }: Pro
 		}
 		setPhase("idle");
 		setStatusMessage(null);
-		setUserCode(null);
-		setVerificationUrl(null);
 	}, []);
 
 	const handleSignOut = useCallback(async () => {
@@ -271,61 +247,6 @@ export function ProviderAuthSection({ provider, compact = false, onChange }: Pro
 				<p className="text-xs" style={{ color: "hsl(var(--muted-foreground))" }}>
 					{statusMessage}
 				</p>
-			)}
-			{userCode && (
-				<div
-					className="rounded-lg p-3 space-y-2"
-					style={{
-						background: "hsl(var(--muted) / 0.4)",
-						border: "1px dashed hsl(var(--border))",
-					}}
-				>
-					<p className="text-xs" style={{ color: "hsl(var(--muted-foreground))" }}>
-						In the browser, enter this code:
-					</p>
-					<div className="flex items-center gap-2">
-						<code
-							className="flex-1 text-sm font-mono font-semibold tracking-widest text-center px-2 py-1.5 rounded-md select-all"
-							style={{
-								background: "hsl(var(--background))",
-								color: "hsl(var(--foreground))",
-							}}
-						>
-							{userCode}
-						</code>
-						<button
-							type="button"
-							onClick={() => {
-								void navigator.clipboard?.writeText(userCode);
-							}}
-							className="text-xs px-2 py-1.5 rounded-md transition-colors hover:opacity-90"
-							style={{
-								background: "hsl(var(--primary))",
-								color: "hsl(var(--primary-foreground))",
-							}}
-						>
-							Copy
-						</button>
-					</div>
-					{verificationUrl && (
-						<p className="text-[10px]" style={{ color: "hsl(var(--muted-foreground))" }}>
-							at{" "}
-							<a
-								href={verificationUrl}
-								onClick={(ev) => {
-									ev.preventDefault();
-									invoke("open_url", { url: verificationUrl }).catch(() => {
-										window.open(verificationUrl, "_blank");
-									});
-								}}
-								className="underline"
-								style={{ color: "hsl(var(--primary))" }}
-							>
-								{verificationUrl}
-							</a>
-						</p>
-					)}
-				</div>
 			)}
 			{error && (
 				<p className="text-xs" style={{ color: "hsl(var(--destructive))" }}>

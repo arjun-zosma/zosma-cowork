@@ -1,23 +1,3 @@
-/**
- * Office Document Tools — Shared Types & Base Executor
- *
- * Defines the parameter schemas and response types for all OfficeCLI tools.
- * Each tool wraps a specific OfficeCLI command with typed parameters,
- * input validation, and structured error handling.
- *
- * Architecture:
- *   Tool (parameter schema) → OfficeCLIExecutor (command dispatch) → OfficeCLI binary
- *
- * OfficeCLI command structure:
- *   officecli <action> <path> [dom-path] [--key value ...]
- *   officecli batch <path> [--actions < batch.json]
- *   officecli view <path> <mode> [--options]
- *   officecli validate <path>
- *   officecli watch <path> [--browser]
- */
-
-import { type Static, TSchema } from "typebox";
-
 // ─── OfficeCLI Binary Interface ──────────────────────────────────────
 
 export interface OfficeCLIResult {

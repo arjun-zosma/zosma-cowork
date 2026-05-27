@@ -62,9 +62,6 @@ jobs:
       - name: Type check
         run: npx tsc --noEmit
 
-      - name: Test
-        run: npm run test
-
       - name: Build
         run: npm run build
 
@@ -82,13 +79,6 @@ jobs:
 
       - name: Build agent-sidecar
         run: node scripts/prebuild.mjs
-
-      - name: Fetch bundled Node.js binary
-        # Tauri's build.rs validates that `binaries/node` (declared in
-        # tauri.conf.json's bundle.resources) exists at compile time.
-        # The file is gitignored (it's a ~50MB platform binary), so CI
-        # must fetch it before the cargo build runs.
-        run: node src-tauri/scripts/fetch-node.mjs
 
       - name: Install frontend dependencies
         run: npm ci
