@@ -5,6 +5,7 @@ import { Clipboard, Download, FolderOpen } from "lucide-react";
 import { useCallback, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { ActivityBlock, ActivityRecap } from "./ActivityBlock";
 import { FeedbackButtons } from "./FeedbackButtons";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { ToolCallSummary, ToolCallTimeline } from "./ToolCallTimeline";
@@ -178,19 +179,31 @@ export function ChatMessageItem({ message, detailsExpanded, models }: ChatMessag
 					)}
 				</div>
 
-				{/* Thinking block */}
+				{/* Thinking block — simple (Perplexity-style) by default, full when
+				    details are expanded via Ctrl+O. */}
 				{!isUser && message.thinking && (
 					<ThinkingBlock
 						thinking={message.thinking}
 						isThinking={message.isStreaming && message.thinking.length > 0}
 						expanded={detailsExpanded}
+						simple={!detailsExpanded}
 					/>
 				)}
 
-				{/* Tool calls — flat inline timeline */}
-				{!isUser && message.toolCalls && message.toolCalls.length > 0 && (
-					<ToolCallTimeline toolCalls={message.toolCalls} detailsExpanded={detailsExpanded} />
-				)}
+				{/* Activity / tool calls.
+				    - details view (Ctrl+O): full technical ToolCallTimeline
+				    - simple + streaming: single friendly ActivityBlock
+				    - simple + finished: compact one-line recap */}
+				{!isUser &&
+					message.toolCalls &&
+					message.toolCalls.length > 0 &&
+					(detailsExpanded ? (
+						<ToolCallTimeline toolCalls={message.toolCalls} detailsExpanded={detailsExpanded} />
+					) : message.isStreaming ? (
+						<ActivityBlock toolCalls={message.toolCalls} active />
+					) : (
+						<ActivityRecap toolCalls={message.toolCalls} />
+					))}
 
 				{/* Content */}
 				{(message.content || message.isStreaming) && (

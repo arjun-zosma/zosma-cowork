@@ -88,16 +88,28 @@ export function streamReducer(state: StreamState, action: StreamAction): StreamS
 				},
 			};
 
+		/**
+		 * TURN_RESET — Soft boundary at the start of each assistant sub-message
+		 * within ONE agent run. We deliberately do NOT clear content/thinking/
+		 * tools: a single user turn maps to a SINGLE assistant bubble that
+		 * accumulates all sub-turns (think → tool → think → … → answer). We only
+		 * insert separators so the latest thinking/text stays readable.
+		 */
 		case "TURN_RESET": {
 			const msg = state.streamingMessage;
 			if (!msg) return state;
+			const prevThinking = msg.thinking || "";
+			const prevContent = msg.content || "";
 			return {
 				...state,
 				streamingMessage: {
 					...msg,
-					content: "",
-					thinking: "",
-					toolCalls: msg.toolCalls || [],
+					// New sub-turn's thinking starts on a fresh line so the simple
+					// view's "latest thought" picks up the newest reasoning.
+					thinking:
+						prevThinking && !prevThinking.endsWith("\n") ? `${prevThinking}\n` : prevThinking,
+					// Separate successive answer paragraphs across sub-turns.
+					content: prevContent && !prevContent.endsWith("\n") ? `${prevContent}\n\n` : prevContent,
 					isStreaming: true,
 				},
 				status: "thinking",
@@ -105,43 +117,13 @@ export function streamReducer(state: StreamState, action: StreamAction): StreamS
 		}
 
 		/**
-		 * MESSAGE_END — Finalize the current streaming message to messages[]
-		 * and create a fresh blank streaming message for the next assistant turn.
-		 * This prevents inter-tool-call AI text from being lost when TURN_RESET
-		 * fires on the next message_start.
-		 *
-		 * IMPORTANT: The new streamingMessage starts with EMPTY toolCalls.
-		 * The previous message's tool calls are already saved in messages[]
-		 * and TOOL_CALL_UPDATE has a messages[] fallback to update them.
-		 * Inheriting toolCalls causes duplicate display.
+		 * MESSAGE_END — No-op in the single-bubble model. A pi `message_end`
+		 * marks the end of one sub-message, but we keep accumulating into the
+		 * same streaming bubble and only finalize on STREAM_COMPLETE. Kept as a
+		 * named case so the event handler stays explicit.
 		 */
-		case "MESSAGE_END": {
-			const msg = state.streamingMessage;
-			if (!msg) return state;
-			// Skip empty messages (no content, thinking, or tool calls)
-			if (!msg.content && !msg.thinking && (!msg.toolCalls || msg.toolCalls.length === 0)) {
-				return state;
-			}
-			// Finalize current message into messages[]
-			const finalized = { ...msg, isStreaming: false };
-			return {
-				...state,
-				messages: [...state.messages, finalized],
-				// Fresh streaming message — empty toolCalls so no duplicates
-				streamingMessage: {
-					id: crypto.randomUUID(),
-					role: "assistant" as const,
-					content: "",
-					thinking: "",
-					isStreaming: true,
-					toolCalls: [],
-					timestamp: Date.now(),
-					model: msg.model,
-					provider: msg.provider,
-				},
-				status: "thinking",
-			};
-		}
+		case "MESSAGE_END":
+			return state;
 
 		case "TEXT_DELTA": {
 			const msg = state.streamingMessage;

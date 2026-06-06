@@ -10,6 +10,7 @@
  */
 
 import type { ToolPhase } from "@/hooks/usePiStream";
+import { friendlyToolPhrase } from "@/lib/statusLabels";
 import type { ChatMessage } from "@/types";
 import { Loader2, Square } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -62,48 +63,34 @@ export function StatusBar({
 	).length;
 	const totalTools = toolCalls.length;
 
-	// Build status label with rich tool detail
+	// Friendly, non-technical status label (issue #173). We deliberately do NOT
+	// surface raw commands, paths, partial output, or model ids here.
 	let statusLabel: string;
-	let toolDetail = "";
 
 	if (status === "thinking") {
 		statusLabel = "Thinking";
 	} else if (status === "tool_call") {
-		// Use toolPhase for richer display
 		if (toolPhase) {
 			switch (toolPhase.type) {
 				case "calling":
-					statusLabel = getToolStatusLabel(toolPhase.toolName, "calling");
-					toolDetail = getToolSummary(toolPhase.toolName, toolPhase.args);
-					break;
 				case "executing":
-					statusLabel = getToolStatusLabel(toolPhase.toolName, "executing");
-					if (toolPhase.partialOutput) {
-						const firstLine = toolPhase.partialOutput.split("\n")[0] || "";
-						toolDetail = firstLine.length > 40 ? `${firstLine.slice(0, 37)}...` : firstLine;
-					}
+					statusLabel = friendlyToolPhrase(toolPhase.toolName);
 					break;
 				case "done":
-					statusLabel = "Completed";
-					toolDetail = toolPhase.toolName;
+					statusLabel = "Working";
 					break;
 				case "error":
-					statusLabel = "Error";
-					toolDetail = toolPhase.message;
+					statusLabel = "Something went wrong";
 					break;
 			}
 		} else {
 			const runningTool = toolCalls.find((tc) => tc.status === "running");
-			if (runningTool) {
-				statusLabel = getToolStatusLabel(runningTool.name, "executing");
-			} else {
-				statusLabel = "Running tool";
-			}
+			statusLabel = runningTool ? friendlyToolPhrase(runningTool.name) : "Working";
 		}
 	} else if (status === "responding") {
-		statusLabel = "Generating response";
+		statusLabel = "Writing a response";
 	} else if (status === "error") {
-		statusLabel = "Error";
+		statusLabel = "Something went wrong";
 	} else {
 		statusLabel = status;
 	}
@@ -130,13 +117,6 @@ export function StatusBar({
 				>
 					{statusLabel}
 				</span>
-
-				{/* Tool detail — the specific command/path */}
-				{toolDetail && (
-					<span className="text-[10px] text-muted-foreground bg-muted/60 px-1.5 py-0 rounded font-mono truncate max-w-[200px]">
-						{toolDetail}
-					</span>
-				)}
 
 				{/* Tool progress dots */}
 				{totalTools > 0 && (
@@ -170,16 +150,6 @@ export function StatusBar({
 				<span className="text-[10px] text-muted-foreground/60 tabular-nums font-mono flex-shrink-0">
 					{formatElapsed(elapsed)}
 				</span>
-
-				{/* Model badge */}
-				{streamingMessage?.model && (
-					<>
-						<span className="text-muted-foreground/30 flex-shrink-0">·</span>
-						<span className="text-[10px] text-muted-foreground/50 bg-muted/40 px-1.5 py-0 rounded font-mono flex-shrink-0 truncate max-w-[120px]">
-							{streamingMessage.provider}/{streamingMessage.model}
-						</span>
-					</>
-				)}
 			</div>
 
 			{/* Abort button */}
@@ -193,66 +163,6 @@ export function StatusBar({
 			</button>
 		</div>
 	);
-}
-
-/** Human-readable status label for a tool, based on its name and phase */
-function getToolStatusLabel(toolName: string, phase: "calling" | "executing"): string {
-	if (phase === "calling") return toolName;
-	switch (toolName) {
-		case "write":
-			return "Writing";
-		case "edit":
-			return "Editing";
-		case "read":
-			return "Reading";
-		case "bash":
-			return "Running command";
-		case "grep":
-			return "Searching";
-		case "web_search":
-			return "Searching web";
-		case "code_search":
-			return "Searching code";
-		case "fetch_content":
-			return "Fetching";
-		case "find":
-			return "Finding files";
-		case "ls":
-			return "Listing";
-		default:
-			return toolName;
-	}
-}
-
-/** Build a short summary for a tool call from its args */
-function getToolSummary(name: string, args: Record<string, unknown>): string {
-	switch (name) {
-		case "bash": {
-			const cmd = typeof args.command === "string" ? args.command : "";
-			return `$ ${cmd.length > 50 ? `${cmd.slice(0, 47)}...` : cmd}`;
-		}
-		case "read": {
-			const p = typeof args.path === "string" ? args.path : "";
-			return p.split("/").pop() || p;
-		}
-		case "write": {
-			const p = typeof args.path === "string" ? args.path : "";
-			const content = typeof args.content === "string" ? args.content : "";
-			const lines = content ? content.split("\n").length : 0;
-			return `${p.split("/").pop() || p} (${lines} lines)`;
-		}
-		case "edit": {
-			const p = typeof args.path === "string" ? args.path : "";
-			const edits = Array.isArray(args.edits) ? args.edits : [];
-			const eCount = edits.length;
-			return `${p.split("/").pop() || p} (${eCount} edit${eCount !== 1 ? "s" : ""})`;
-		}
-		case "grep": {
-			return typeof args.pattern === "string" ? `/${args.pattern}/` : name;
-		}
-		default:
-			return name;
-	}
 }
 
 function formatElapsed(seconds: number): string {
