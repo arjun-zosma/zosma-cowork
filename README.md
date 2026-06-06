@@ -38,9 +38,14 @@
 
 <img src="./assets/demo.gif" width="100%" alt="Zosma Cowork demo" />
 
-<img src="./assets/screenshot.png" width="100%" alt="Zosma Cowork screenshot" />
+<img src="./assets/screenshot-home.png" width="100%" alt="Zosma Cowork home — start a session, pick a workspace folder, and choose a starting point" />
 
-*Invoice processing with natural language agents. See more demos at [zosma.ai/zosma-cowork/gallery](https://www.zosma.ai/zosma-cowork/gallery)*
+<p align="center">
+  <img src="./assets/screenshot-chat.png" width="49%" alt="Zosma Cowork — streaming AI response with markdown and code" />
+  <img src="./assets/screenshot-settings.png" width="49%" alt="Zosma Cowork — settings with theme, extensions, skills and more" />
+</p>
+
+*A modern, floating-panel workspace — home, a live AI response, and settings. See more demos at [zosma.ai/zosma-cowork/gallery](https://www.zosma.ai/zosma-cowork/gallery)*
 
 ## Why Zosma Cowork?
 
