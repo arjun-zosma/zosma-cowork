@@ -55,12 +55,16 @@ export function Dialog({
 		const prevOverflow = document.body.style.overflow;
 		document.body.style.overflow = "hidden";
 
-		// Focus first interactive element inside panel
+		// Focus first interactive element inside panel. A consumer can mark a
+		// preferred target with `data-autofocus` (e.g. a text field) so focus does
+		// not default to the header close button.
 		const panel = panelRef.current;
 		if (panel) {
-			const focusable = panel.querySelector<HTMLElement>(
-				'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-			);
+			const focusable =
+				panel.querySelector<HTMLElement>("[data-autofocus]:not([disabled])") ??
+				panel.querySelector<HTMLElement>(
+					'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+				);
 			// Small timeout so the focus lands after the entrance animation begins
 			const id = window.setTimeout(() => focusable?.focus(), 50);
 			return () => {

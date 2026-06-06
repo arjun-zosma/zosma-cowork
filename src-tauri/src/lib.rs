@@ -468,7 +468,17 @@ async fn read_stdout(
                     // UI can listen for them globally (separate from prompt
                     // streaming channels which are scoped to active prompts).
                     if let Some(kind) = e.get("kind").and_then(|v| v.as_str()) {
-                        if kind.starts_with("oauth_") || kind == "agent_reload_failed" {
+                        // Surface OAuth, reload, and extension-UI requests as
+                        // global Tauri events. `ui_request` carries ctx.ui
+                        // dialog calls (e.g. pi-ask-user) so the React UI can
+                        // render them regardless of which prompt is active.
+                        // `ui_cancel` tells the UI to dismiss a dialog the
+                        // sidecar already resolved itself (timeout/abort).
+                        if kind.starts_with("oauth_")
+                            || kind == "agent_reload_failed"
+                            || kind == "ui_request"
+                            || kind == "ui_cancel"
+                        {
                             let _ = app.emit(kind, e.clone());
                         }
                     }
@@ -611,6 +621,31 @@ async fn send_prompt(
 #[tauri::command]
 async fn abort_prompt(s: State<'_, AppState>) -> Result<(), String> {
     scmd(&s, &serde_json::json!({"type":"abort","id":"ab"})).await
+}
+
+/// Answer an extension UI dialog (ctx.ui.select/confirm/input/editor). `id` is
+/// the UI-request id from the `ui_request` event. Exactly one of `value`/
+/// `confirmed` is set, or `cancelled` is true. Fire-and-forget: the sidecar
+/// resolves the pending dialog promise and sends no response.
+#[tauri::command]
+async fn send_ui_response(
+    id: String,
+    value: Option<String>,
+    confirmed: Option<bool>,
+    cancelled: Option<bool>,
+    s: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut msg = serde_json::json!({ "type": "ui_response", "id": id });
+    if let Some(v) = value {
+        msg["value"] = serde_json::Value::String(v);
+    }
+    if let Some(c) = confirmed {
+        msg["confirmed"] = serde_json::Value::Bool(c);
+    }
+    if let Some(c) = cancelled {
+        msg["cancelled"] = serde_json::Value::Bool(c);
+    }
+    scmd(&s, &msg).await
 }
 
 #[tauri::command]
@@ -1600,6 +1635,7 @@ pub fn run() {
             get_active_model,
             send_prompt,
             abort_prompt,
+            send_ui_response,
             set_active_model,
             save_auth_key,
             start_oauth,

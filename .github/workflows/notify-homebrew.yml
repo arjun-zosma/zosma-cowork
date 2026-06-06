@@ -20,10 +20,12 @@ jobs:
   notify:
     name: Dispatch release to homebrew-tap
     runs-on: ubuntu-latest
+    # Release only runs on version-tag pushes, so a successful run is always a
+    # release tag (with or without a 'v' prefix). The dispatched version is
+    # normalised below by stripping any leading 'v'.
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       startsWith(github.event.workflow_run.head_branch, 'v'))
+      github.event.workflow_run.conclusion == 'success'
     steps:
       - name: Attempt dispatch to homebrew-tap
         continue-on-error: true

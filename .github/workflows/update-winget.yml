@@ -23,33 +23,45 @@ jobs:
     runs-on: ubuntu-latest
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       startsWith(github.event.workflow_run.head_branch, 'v'))
+      github.event.workflow_run.conclusion == 'success'
     steps:
       - uses: actions/checkout@v4
 
       - name: Determine version
         id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_run" ]; then
-            VERSION="${{ github.event.workflow_run.head_branch }}"
-            VERSION="${VERSION#v}"
+            # tag verbatim (e.g. v0.14.0 or bare 0.15.0)
+            TAG="${{ github.event.workflow_run.head_branch }}"
           else
-            VERSION="${{ github.event.inputs.version }}"
+            REQ="${{ github.event.inputs.version }}"
+            TAG=""
+            for cand in "$REQ" "v${REQ#v}" "${REQ#v}"; do
+              if curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
+                "https://api.github.com/repos/zosmaai/zosma-cowork/releases/tags/${cand}" >/dev/null 2>&1; then
+                TAG="$cand"; break
+              fi
+            done
+            [ -z "$TAG" ] && TAG="v${REQ#v}"
           fi
+          VERSION="${TAG#v}"
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "Processing version: ${VERSION}"
+          echo "Processing tag=${TAG} version=${VERSION}"
 
       - name: Download MSI and compute hashes
         id: hashes
         run: |
           VERSION="${{ steps.version.outputs.version }}"
+          TAG="${{ steps.version.outputs.tag }}"
           # Download MSI
-          MSI_URL="https://github.com/zosmaai/zosma-cowork/releases/download/v${VERSION}/zosma-cowork_${VERSION}_x64_en-US.msi"
+          MSI_URL="https://github.com/zosmaai/zosma-cowork/releases/download/${TAG}/zosma-cowork_${VERSION}_x64_en-US.msi"
           echo "Downloading MSI from: ${MSI_URL}"
           curl -fSL -o "zosma-cowork.msi" "${MSI_URL}" || {
             echo "MSI not found at ${MSI_URL} — trying alternative naming..."
-            MSI_URL="https://github.com/zosmaai/zosma-cowork/releases/download/v${VERSION}/zosma-cowork_${VERSION}_x64.msi"
+            MSI_URL="https://github.com/zosmaai/zosma-cowork/releases/download/${TAG}/zosma-cowork_${VERSION}_x64.msi"
             curl -fSL -o "zosma-cowork.msi" "${MSI_URL}" || echo "MSI not found"
           }
           if [ -f zosma-cowork.msi ]; then
@@ -59,7 +71,7 @@ jobs:
           fi
 
           # Download EXE
-          EXE_URL="https://github.com/zosmaai/zosma-cowork/releases/download/v${VERSION}/zosma-cowork_${VERSION}_x64-setup.exe"
+          EXE_URL="https://github.com/zosmaai/zosma-cowork/releases/download/${TAG}/zosma-cowork_${VERSION}_x64-setup.exe"
           echo "Downloading EXE from: ${EXE_URL}"
           curl -fSL -o "zosma-cowork.exe" "${EXE_URL}" || echo "EXE not found"
           if [ -f zosma-cowork.exe ]; then
@@ -72,6 +84,7 @@ jobs:
         id: manifest
         run: |
           VERSION="${{ steps.version.outputs.version }}"
+          TAG="${{ steps.version.outputs.tag }}"
           MSI_SHA256="${{ steps.hashes.outputs.msi_sha256 }}"
           EXE_SHA256="${{ steps.hashes.outputs.exe_sha256 }}"
 
@@ -109,11 +122,11 @@ jobs:
           echo "  - Architecture: x64" >> "$FILE"
           if [ -n "${MSI_SHA256}" ]; then
             echo "    InstallerType: msi" >> "$FILE"
-            echo "    InstallerUrl: https://github.com/zosmaai/zosma-cowork/releases/download/v${VERSION}/zosma-cowork_${VERSION}_x64_en-US.msi" >> "$FILE"
+            echo "    InstallerUrl: https://github.com/zosmaai/zosma-cowork/releases/download/${TAG}/zosma-cowork_${VERSION}_x64_en-US.msi" >> "$FILE"
             echo "    InstallerSha256: \"${MSI_SHA256}\"" >> "$FILE"
           else
             echo "    InstallerType: exe" >> "$FILE"
-            echo "    InstallerUrl: https://github.com/zosmaai/zosma-cowork/releases/download/v${VERSION}/zosma-cowork_${VERSION}_x64-setup.exe" >> "$FILE"
+            echo "    InstallerUrl: https://github.com/zosmaai/zosma-cowork/releases/download/${TAG}/zosma-cowork_${VERSION}_x64-setup.exe" >> "$FILE"
             echo "    InstallerSha256: \"${EXE_SHA256}\"" >> "$FILE"
             echo "    InstallerSwitches:" >> "$FILE"
             echo "      Silent: /S" >> "$FILE"

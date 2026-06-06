@@ -35,30 +35,44 @@ jobs:
   update-aur:
     name: Publish to AUR
     runs-on: ubuntu-latest
-    # On workflow_run, only proceed if the Release workflow succeeded
-    # AND it was triggered by a tag push (head_branch is the tag name).
+    # On workflow_run, only proceed if the Release workflow succeeded.
+    # The Release workflow only runs on version-tag pushes, so a successful
+    # run always corresponds to a release tag (with or without a 'v' prefix).
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       startsWith(github.event.workflow_run.head_branch, 'v'))
+      github.event.workflow_run.conclusion == 'success'
     steps:
       - name: Determine version
         id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_run" ]; then
-            # head_branch on a tag-triggered workflow_run is the tag name (e.g., v0.14.0)
-            VERSION="${{ github.event.workflow_run.head_branch }}"
+            # head_branch on a tag-triggered workflow_run is the tag name verbatim
+            # (e.g., v0.14.0 or bare 0.15.0).
+            TAG="${{ github.event.workflow_run.head_branch }}"
           else
-            VERSION="${{ inputs.version }}"
+            # Manual dispatch: resolve the real tag (a release may be tagged
+            # "v0.15.0" or bare "0.15.0").
+            REQ="${{ inputs.version }}"
+            TAG=""
+            for cand in "$REQ" "v${REQ#v}" "${REQ#v}"; do
+              if curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
+                "https://api.github.com/repos/zosmaai/zosma-cowork/releases/tags/${cand}" >/dev/null 2>&1; then
+                TAG="$cand"; break
+              fi
+            done
+            [ -z "$TAG" ] && TAG="v${REQ#v}"
           fi
-          VERSION="${VERSION#v}"
+          VERSION="${TAG#v}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "Resolved version: ${VERSION}"
+          echo "Resolved tag=${TAG} version=${VERSION}"
 
       - name: Download .deb and compute sha256
         id: checksum
         run: |
-          DEB_URL="https://github.com/zosmaai/zosma-cowork/releases/download/v${{ steps.version.outputs.version }}/zosma-cowork_${{ steps.version.outputs.version }}_amd64.deb"
+          DEB_URL="https://github.com/zosmaai/zosma-cowork/releases/download/${{ steps.version.outputs.tag }}/zosma-cowork_${{ steps.version.outputs.version }}_amd64.deb"
           echo "Downloading: ${DEB_URL}"
           curl -fsSL -o zosma-cowork.deb "${DEB_URL}"
           SHA256=$(sha256sum zosma-cowork.deb | cut -d' ' -f1)
@@ -103,6 +117,7 @@ jobs:
         working-directory: zosma-cowork-bin
         run: |
           VERSION="${{ steps.version.outputs.version }}"
+          TAG="${{ steps.version.outputs.tag }}"
           SHA256="${{ steps.checksum.outputs.sha256 }}"
 
           {
@@ -120,7 +135,7 @@ jobs:
             printf '%s\n' '	depends = librsvg';
             printf '%s\n' '	provides = zosma-cowork';
             printf '%s\n' '	conflicts = zosma-cowork';
-            printf '%s\n' "	source = zosma-cowork-${VERSION}.deb::https://github.com/zosmaai/zosma-cowork/releases/download/v${VERSION}/zosma-cowork_${VERSION}_amd64.deb";
+            printf '%s\n' "	source = zosma-cowork-${VERSION}.deb::https://github.com/zosmaai/zosma-cowork/releases/download/${TAG}/zosma-cowork_${VERSION}_amd64.deb";
             printf '%s\n' "	sha256sums = ${SHA256}";
             printf '%s\n' '	options = !strip';
             printf '%s\n' '';

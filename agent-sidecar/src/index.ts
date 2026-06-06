@@ -24,6 +24,7 @@ import {
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
+import { randomUUID } from "node:crypto";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Timeout configuration
@@ -77,9 +78,12 @@ import {
 	AuthStorage,
 	DefaultResourceLoader,
 	type ExtensionFactory,
+	type ExtensionUIContext,
+	type ExtensionUIDialogOptions,
 	ModelRegistry,
 	SessionManager,
 	SettingsManager,
+	type Theme,
 	createAgentSession,
 } from "@earendil-works/pi-coding-agent";
 // pi-coding-agent's AuthStorage.login does not forward an `originator`
@@ -349,6 +353,19 @@ interface GetRemoteStatusCommand {
 	id: string;
 }
 
+/**
+ * Response to an extension UI dialog request (ctx.ui.select/confirm/input/editor).
+ * `id` is the UI-request id emitted by the sidecar's uiContext bridge (NOT a
+ * command-correlation id — no result/done is sent back for this command).
+ */
+interface UiResponseCommand {
+	type: "ui_response";
+	id: string;
+	value?: string;
+	confirmed?: boolean;
+	cancelled?: boolean;
+}
+
 type Command =
 	| InitCommand
 	| GetModelsCommand
@@ -383,7 +400,8 @@ type Command =
 	| FetchSkillPackumentCommand
 	| StartRemoteCommand
 	| StopRemoteCommand
-	| GetRemoteStatusCommand;
+	| GetRemoteStatusCommand
+	| UiResponseCommand;
 
 // ---------------------------------------------------------------------------
 // Logger (stderr — never interferes with stdout protocol)
@@ -437,6 +455,203 @@ function send(obj: unknown) {
 		}
 		throw err;
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Extension UI bridge
+// ---------------------------------------------------------------------------
+//
+// pi extensions never render UI directly — they call abstract `ctx.ui.*`
+// methods (ExtensionUIContext). Each host supplies an implementation: pi's TUI
+// mode draws a terminal overlay, pi's RPC mode emits a JSON request/response
+// sub-protocol, and headless/print mode is a no-op (ctx.hasUI === false).
+//
+// Cowork embeds the engine via createAgentSession() and previously bound NO
+// uiContext, so extensions ran in "print" mode: ctx.hasUI was false and tools
+// like pi-ask-user bailed out ("Ask requires interactive mode") and the model
+// answered itself. This bridge mirrors pi's RPC Extension-UI protocol but
+// routes requests to the desktop UI: dialog calls are emitted as
+// `{ kind: "ui_request", method, id, ... }` events (which the Rust layer
+// forwards to the React frontend) and resolve when the frontend posts back a
+// `ui_response` command on stdin. `custom()` returns undefined so well-behaved
+// extensions degrade to the portable select()/input() dialogs.
+
+interface PendingUiResponse {
+	value?: string;
+	confirmed?: boolean;
+	cancelled?: boolean;
+}
+
+const pendingUiRequests = new Map<string, (response: PendingUiResponse) => void>();
+
+/** Resolve a pending ctx.ui dialog from a `ui_response` stdin command. */
+function resolveUiResponse(response: PendingUiResponse & { id: string }): void {
+	const resolve = pendingUiRequests.get(response.id);
+	if (resolve) {
+		pendingUiRequests.delete(response.id);
+		resolve(response);
+	}
+}
+
+/** Emit a UI request wrapped in the standard event envelope the Rust layer forwards. */
+function emitUiRequest(payload: Record<string, unknown>): void {
+	send({ type: "event", event: { kind: "ui_request", ...payload } });
+}
+
+/**
+ * Tell the frontend to dismiss a dialog the sidecar resolved on its own
+ * (timeout or abort). Without this the React dialog stays on screen while the
+ * agent has already moved on with the default/cancelled value.
+ */
+function emitUiCancel(id: string): void {
+	send({ type: "event", event: { kind: "ui_cancel", id } });
+}
+
+/**
+ * Minimal Theme stub. Headless dialogs (the path extensions take here) never
+ * read ctx.ui.theme, but the ExtensionUIContext type requires it. Styling
+ * helpers are identity functions so anything that does touch it stays safe.
+ */
+const MINIMAL_THEME = {
+	fg: (_color: unknown, text: string) => text,
+	bg: (_color: unknown, text: string) => text,
+	bold: (text: string) => text,
+	italic: (text: string) => text,
+	underline: (text: string) => text,
+	inverse: (text: string) => text,
+	strikethrough: (text: string) => text,
+	getFgAnsi: () => "",
+	getBgAnsi: () => "",
+	getColorMode: () => "none",
+	getThinkingBorderColor: () => (s: string) => s,
+	getBashModeBorderColor: () => (s: string) => s,
+} as unknown as Theme;
+
+/** Dialog helper with signal/timeout support, mirroring pi's RPC mode. */
+function createUiDialog<T>(
+	opts: ExtensionUIDialogOptions | undefined,
+	defaultValue: T,
+	request: Record<string, unknown>,
+	parse: (response: PendingUiResponse) => T,
+): Promise<T> {
+	if (opts?.signal?.aborted) return Promise.resolve(defaultValue);
+	const id = randomUUID();
+	return new Promise<T>((resolve) => {
+		let timeoutId: ReturnType<typeof setTimeout> | undefined;
+		const cleanup = () => {
+			if (timeoutId) clearTimeout(timeoutId);
+			opts?.signal?.removeEventListener("abort", onAbort);
+			pendingUiRequests.delete(id);
+		};
+		const onAbort = () => {
+			cleanup();
+			emitUiCancel(id);
+			resolve(defaultValue);
+		};
+		opts?.signal?.addEventListener("abort", onAbort, { once: true });
+		if (opts?.timeout) {
+			timeoutId = setTimeout(() => {
+				cleanup();
+				emitUiCancel(id);
+				resolve(defaultValue);
+			}, opts.timeout);
+		}
+		pendingUiRequests.set(id, (response) => {
+			cleanup();
+			resolve(parse(response));
+		});
+		emitUiRequest({ id, ...request });
+	});
+}
+
+/** Build an ExtensionUIContext that bridges ctx.ui to the desktop UI. */
+function createUiContext(): ExtensionUIContext {
+	return {
+		select: (title, options, opts) =>
+			createUiDialog<string | undefined>(
+				opts,
+				undefined,
+				{ method: "select", title, options, timeout: opts?.timeout },
+				(r) => (r.cancelled ? undefined : r.value),
+			),
+		confirm: (title, message, opts) =>
+			createUiDialog<boolean>(
+				opts,
+				false,
+				{ method: "confirm", title, message, timeout: opts?.timeout },
+				(r) => (r.cancelled ? false : Boolean(r.confirmed)),
+			),
+		input: (title, placeholder, opts) =>
+			createUiDialog<string | undefined>(
+				opts,
+				undefined,
+				{ method: "input", title, placeholder, timeout: opts?.timeout },
+				(r) => (r.cancelled ? undefined : r.value),
+			),
+		editor: (title, prefill) =>
+			createUiDialog<string | undefined>(
+				undefined,
+				undefined,
+				{ method: "editor", title, prefill },
+				(r) => (r.cancelled ? undefined : r.value),
+			),
+		notify: (message, type) =>
+			emitUiRequest({ id: randomUUID(), method: "notify", message, notifyType: type }),
+		setStatus: (key, text) =>
+			emitUiRequest({ id: randomUUID(), method: "setStatus", statusKey: key, statusText: text }),
+		setWidget: (key, content, options) => {
+			// Only string arrays travel over the bridge; component factories need a TUI.
+			if (content === undefined || Array.isArray(content)) {
+				emitUiRequest({
+					id: randomUUID(),
+					method: "setWidget",
+					widgetKey: key,
+					widgetLines: content,
+					widgetPlacement: options?.placement,
+				});
+			}
+		},
+		setTitle: (title) => emitUiRequest({ id: randomUUID(), method: "setTitle", title }),
+		setEditorText: (text) =>
+			emitUiRequest({ id: randomUUID(), method: "set_editor_text", text }),
+		pasteToEditor(text) {
+			this.setEditorText(text);
+		},
+		getEditorText: () => "",
+		onTerminalInput: () => () => {},
+		setWorkingMessage: () => {},
+		setWorkingVisible: () => {},
+		setWorkingIndicator: () => {},
+		setHiddenThinkingLabel: () => {},
+		setFooter: () => {},
+		setHeader: () => {},
+		// TUI-only: returning undefined makes extensions fall back to dialog methods.
+		custom: async () => undefined as never,
+		addAutocompleteProvider: () => {},
+		setEditorComponent: () => {},
+		getEditorComponent: () => undefined,
+		get theme() {
+			return MINIMAL_THEME;
+		},
+		getAllThemes: () => [],
+		getTheme: () => undefined,
+		setTheme: () => ({ success: false, error: "Theme switching not supported in Cowork" }),
+		getToolsExpanded: () => false,
+		setToolsExpanded: () => {},
+	};
+}
+
+/**
+ * Bind the UI bridge to a freshly created session. Providing a uiContext flips
+ * the extension runtime's `hasUI()` to true (it returns false only for the
+ * internal no-op context), so `ctx.hasUI`-gated tools like pi-ask-user run
+ * instead of bailing out. bindExtensions also emits the extensions'
+ * `session_start` event, which previously never fired under Cowork.
+ */
+async function bindExtensionUi(
+	s: Awaited<ReturnType<typeof createAgentSession>>["session"],
+): Promise<void> {
+	await s.bindExtensions({ uiContext: createUiContext() });
 }
 
 // Handle EPIPE on stdout globally (when pipe breaks before our next write)
@@ -1112,6 +1327,11 @@ async function main() {
 			send({ type: "event", event });
 		});
 
+		// Bind the extension UI bridge (mode "rpc" → ctx.hasUI true) so ctx.ui
+		// dialogs (e.g. pi-ask-user) render in the desktop UI, and so extensions
+		// receive their session_start event.
+		await bindExtensionUi(result.session);
+
 		initialized = true;
 
 		// Report available models
@@ -1315,6 +1535,20 @@ async function main() {
 						id: cmd.id ?? activePromptId ?? "abort",
 					});
 					activePromptId = null;
+					break;
+				}
+
+				// ── ui_response ────────────────────────────────────────────
+				// Frontend's answer to a ctx.ui dialog request. Resolves the
+				// pending promise in the extension UI bridge; no result/done is
+				// sent (the `id` is a UI-request id, not a command id).
+				case "ui_response": {
+					resolveUiResponse({
+						id: cmd.id,
+						value: cmd.value,
+						confirmed: cmd.confirmed,
+						cancelled: cmd.cancelled,
+					});
 					break;
 				}
 
@@ -1740,6 +1974,9 @@ async function main() {
 						send({ type: "event", event });
 					});
 
+					// Re-bind the extension UI bridge for the new session.
+					await bindExtensionUi(result.session);
+
 					send({
 						type: "result",
 						id: cmd.id,
@@ -1841,6 +2078,9 @@ async function main() {
 							session.subscribe((event) => {
 								send({ type: "event", event });
 							});
+
+							// Re-bind the extension UI bridge for the resumed session.
+							await bindExtensionUi(resumed.session);
 						}
 
 						// 3. Restore the saved conversation into the reloaded session.

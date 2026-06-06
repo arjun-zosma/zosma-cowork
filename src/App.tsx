@@ -1,4 +1,5 @@
 import { ChatView } from "@/chat/ChatView";
+import { ExtensionUiHost } from "@/components/ExtensionUiHost";
 import { HomeView } from "@/components/HomeView";
 import { MobileBottomNav } from "@/components/MobileBottomNav";
 import { MobileTopBar } from "@/components/MobileTopBar";
@@ -620,6 +621,9 @@ function App() {
 			{/* Atmospheric backdrop — panels float above this living surface */}
 			<div className="app-backdrop" aria-hidden="true" />
 			<div className="app-grain" aria-hidden="true" />
+
+			{/* Extension UI dialogs (pi-ask-user etc. via ctx.ui) */}
+			<ExtensionUiHost />
 
 			{/* Delete chat confirmation */}
 			<ConfirmDialog

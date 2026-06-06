@@ -3,8 +3,11 @@ name: Release
 on:
   push:
     tags:
+      # Only v-prefixed semver tags cut a release. A bare "0.15.0" tag must NOT
+      # produce a release: every downstream packager (Homebrew/AUR/Winget) and
+      # the published cask URL assume the canonical "v" prefix, so a no-v tag
+      # ships a half-broken release. Reject it loudly (no build) instead.
       - "v*.*.*"
-      - "*.*.*"
 
 permissions:
   contents: write
