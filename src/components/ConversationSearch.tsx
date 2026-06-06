@@ -89,8 +89,12 @@ export function ConversationSearch({
 					onClick={onNewSession}
 					aria-label="New session"
 					title="New session — pick a folder for the agent to work in"
-					className="flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-medium"
-					style={{ color: "hsl(var(--primary))", background: "hsl(var(--primary) / 0.08)" }}
+					className="shimmer flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium"
+					style={{
+						color: "hsl(var(--primary))",
+						background: "hsl(var(--primary) / 0.1)",
+						boxShadow: "inset 0 0 0 1px hsl(var(--primary) / 0.2)",
+					}}
 					whileHover={reduced ? {} : { scale: 1.04, background: "hsl(var(--primary) / 0.15)" }}
 					whileTap={reduced ? {} : { scale: 0.96 }}
 					transition={{ duration: 0.15, ease: easeOutExpo }}
@@ -254,7 +258,10 @@ function SessionRow({
 					<motion.div
 						layoutId="active-bar"
 						className="absolute left-0 top-2 bottom-2 w-[3px] rounded-full"
-						style={{ background: "hsl(var(--primary))" }}
+						style={{
+							background: "hsl(var(--primary))",
+							boxShadow: "0 0 10px hsl(var(--primary) / 0.7), 0 0 2px hsl(var(--primary))",
+						}}
 						initial={{ scaleY: 0, opacity: 0 }}
 						animate={{ scaleY: 1, opacity: 1 }}
 						exit={{ scaleY: 0, opacity: 0 }}
@@ -271,7 +278,11 @@ function SessionRow({
 					isActive ? "bg-sidebar-accent" : ""
 				}`}
 				style={{
-					background: !isActive && hovered ? "hsl(var(--accent) / 0.5)" : undefined,
+					background: isActive
+						? "linear-gradient(90deg, hsl(var(--primary) / 0.12), hsl(var(--primary) / 0.02))"
+						: hovered
+							? "hsl(var(--accent) / 0.5)"
+							: undefined,
 				}}
 				whileTap={reduced ? {} : { scale: 0.985 }}
 				transition={{ duration: 0.12, ease: [0.16, 1, 0.3, 1] }}

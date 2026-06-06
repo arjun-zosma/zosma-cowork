@@ -281,6 +281,65 @@
 	--sidebar-border: 0 0% 12%;
 }
 
+/* ═══════════════════════════════════════════════
+   Modern depth & atmosphere — UI refresh
+   Floating glass panels over an animated mesh.
+   Adapts to light/dark via per-theme overrides below.
+   ═══════════════════════════════════════════════ */
+:root {
+	/* Atmospheric backdrop glows (built from the brand palette) */
+	--glow-a: 102 80% 55%;
+	--glow-b: 142 55% 48%;
+	--glow-c: 80 60% 60%;
+	/* Glass panel surface */
+	--panel-alpha: 0.74;
+	--panel-border: 45 12% 80%;
+	--panel-border-alpha: 0.7;
+	/* Layered elevation — the "raised / hanging" 3D feel */
+	--panel-shadow: 0 1px 2px hsl(40 20% 20% / 0.05), 0 10px 24px -10px hsl(40 20% 20% / 0.14),
+		0 28px 56px -22px hsl(40 20% 20% / 0.12);
+	--panel-highlight: inset 0 1px 0 hsl(0 0% 100% / 0.65);
+	--backdrop-blur: 14px;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root:not([data-theme]) {
+		--glow-a: 102 70% 45%;
+		--glow-b: 142 50% 35%;
+		--glow-c: 160 50% 38%;
+		--panel-alpha: 0.55;
+		--panel-border: 0 0% 100%;
+		--panel-border-alpha: 0.08;
+		--panel-shadow: 0 1px 2px hsl(0 0% 0% / 0.5), 0 14px 34px -10px hsl(0 0% 0% / 0.6),
+			0 36px 70px -28px hsl(0 0% 0% / 0.55);
+		--panel-highlight: inset 0 1px 0 hsl(0 0% 100% / 0.07);
+	}
+}
+
+[data-theme="light"] {
+	--glow-a: 102 80% 55%;
+	--glow-b: 142 55% 48%;
+	--glow-c: 80 60% 60%;
+	--panel-alpha: 0.74;
+	--panel-border: 45 12% 80%;
+	--panel-border-alpha: 0.7;
+	--panel-shadow: 0 1px 2px hsl(40 20% 20% / 0.05), 0 10px 24px -10px hsl(40 20% 20% / 0.14),
+		0 28px 56px -22px hsl(40 20% 20% / 0.12);
+	--panel-highlight: inset 0 1px 0 hsl(0 0% 100% / 0.65);
+}
+
+[data-theme="dark"] {
+	--glow-a: 102 70% 45%;
+	--glow-b: 142 50% 35%;
+	--glow-c: 160 50% 38%;
+	--panel-alpha: 0.55;
+	--panel-border: 0 0% 100%;
+	--panel-border-alpha: 0.08;
+	--panel-shadow: 0 1px 2px hsl(0 0% 0% / 0.5), 0 14px 34px -10px hsl(0 0% 0% / 0.6),
+		0 36px 70px -28px hsl(0 0% 0% / 0.55);
+	--panel-highlight: inset 0 1px 0 hsl(0 0% 100% / 0.07);
+}
+
 @theme {
 	--color-background: hsl(var(--background));
 	--color-foreground: hsl(var(--foreground));
@@ -427,4 +486,161 @@ body {
 }
 .animate-pulse-dot {
 	animation: pulse-dot 1.5s ease-in-out infinite;
+}
+
+/* ═══════════════════════════════════════════════
+   Atmospheric backdrop — the "nice background" panels float over
+   ═══════════════════════════════════════════════ */
+.app-backdrop {
+	position: fixed;
+	inset: 0;
+	z-index: 0;
+	pointer-events: none;
+	overflow: hidden;
+	background:
+		radial-gradient(60% 50% at 18% 8%, hsl(var(--glow-a) / 0.16), transparent 70%),
+		radial-gradient(55% 50% at 92% 18%, hsl(var(--glow-b) / 0.13), transparent 72%),
+		radial-gradient(70% 60% at 50% 108%, hsl(var(--glow-c) / 0.12), transparent 70%),
+		hsl(var(--background));
+}
+/* Slow-drifting aurora blobs for living depth */
+.app-backdrop::before,
+.app-backdrop::after {
+	content: "";
+	position: absolute;
+	border-radius: 50%;
+	filter: blur(70px);
+	opacity: 0.5;
+	will-change: transform;
+}
+.app-backdrop::before {
+	width: 46vw;
+	height: 46vw;
+	top: -12vw;
+	left: -8vw;
+	background: radial-gradient(circle, hsl(var(--glow-a) / 0.4), transparent 65%);
+	animation: aurora-a 26s ease-in-out infinite;
+}
+.app-backdrop::after {
+	width: 40vw;
+	height: 40vw;
+	bottom: -14vw;
+	right: -6vw;
+	background: radial-gradient(circle, hsl(var(--glow-b) / 0.36), transparent 65%);
+	animation: aurora-b 32s ease-in-out infinite;
+}
+/* Fine grain to kill banding and add tactile texture */
+.app-grain {
+	position: fixed;
+	inset: 0;
+	z-index: 0;
+	pointer-events: none;
+	opacity: 0.035;
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+@keyframes aurora-a {
+	0%,
+	100% {
+		transform: translate(0, 0) scale(1);
+	}
+	50% {
+		transform: translate(8vw, 6vh) scale(1.12);
+	}
+}
+@keyframes aurora-b {
+	0%,
+	100% {
+		transform: translate(0, 0) scale(1.05);
+	}
+	50% {
+		transform: translate(-7vw, -5vh) scale(0.92);
+	}
+}
+
+/* ═══ Raised glass panels — the 3D "hanging over background" surface ═══ */
+.panel-raised {
+	background: hsl(var(--card) / var(--panel-alpha));
+	-webkit-backdrop-filter: blur(var(--backdrop-blur)) saturate(1.4);
+	backdrop-filter: blur(var(--backdrop-blur)) saturate(1.4);
+	border: 1px solid hsl(var(--panel-border) / var(--panel-border-alpha));
+	box-shadow: var(--panel-shadow), var(--panel-highlight);
+}
+.panel-sidebar {
+	background: hsl(var(--sidebar-background) / var(--panel-alpha));
+	-webkit-backdrop-filter: blur(var(--backdrop-blur)) saturate(1.4);
+	backdrop-filter: blur(var(--backdrop-blur)) saturate(1.4);
+	border: 1px solid hsl(var(--panel-border) / var(--panel-border-alpha));
+	box-shadow: var(--panel-shadow), var(--panel-highlight);
+}
+
+/* ═══ Shining moving sheen — sweeps across a surface ═══ */
+@keyframes sheen-sweep {
+	0% {
+		transform: translateX(-120%) skewX(-18deg);
+	}
+	100% {
+		transform: translateX(220%) skewX(-18deg);
+	}
+}
+.shimmer {
+	position: relative;
+	overflow: hidden;
+}
+.shimmer::after {
+	content: "";
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 55%;
+	height: 100%;
+	background: linear-gradient(
+		100deg,
+		transparent,
+		hsl(0 0% 100% / 0.18) 45%,
+		hsl(0 0% 100% / 0.32) 50%,
+		hsl(0 0% 100% / 0.18) 55%,
+		transparent
+	);
+	animation: sheen-sweep 5.5s ease-in-out infinite;
+	pointer-events: none;
+}
+
+/* Animated gradient border/text for hero accents */
+@keyframes gradient-pan {
+	0%,
+	100% {
+		background-position: 0% 50%;
+	}
+	50% {
+		background-position: 100% 50%;
+	}
+}
+.animate-gradient-pan {
+	background-size: 200% 200%;
+	animation: gradient-pan 6s ease infinite;
+}
+
+/* Gentle floating bob for raised accents */
+@keyframes float-bob {
+	0%,
+	100% {
+		transform: translateY(0);
+	}
+	50% {
+		transform: translateY(-4px);
+	}
+}
+.animate-float-bob {
+	animation: float-bob 5s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.app-backdrop::before,
+	.app-backdrop::after,
+	.shimmer::after,
+	.animate-gradient-pan,
+	.animate-float-bob {
+		animation: none !important;
+	}
 }

@@ -616,7 +616,11 @@ function App() {
 	}));
 
 	return (
-		<div className="flex h-screen bg-background">
+		<div className="relative flex h-screen overflow-hidden text-foreground md:gap-3 md:p-3">
+			{/* Atmospheric backdrop — panels float above this living surface */}
+			<div className="app-backdrop" aria-hidden="true" />
+			<div className="app-grain" aria-hidden="true" />
+
 			{/* Delete chat confirmation */}
 			<ConfirmDialog
 				open={pendingDelete !== null}
@@ -653,7 +657,7 @@ function App() {
 			{!hideChrome && (
 				<>
 					{/* Desktop sidebar */}
-					<div className="hidden md:block">
+					<div className="relative z-10 hidden md:block">
 						<Sidebar
 							view={sidebarView}
 							sessions={sidebarSessions}
@@ -700,7 +704,7 @@ function App() {
 						/>
 						{/* Sidebar panel */}
 						<div
-							className={`relative w-64 h-full bg-sidebar border-r border-sidebar-border transition-transform duration-200 ${
+							className={`relative w-72 h-full transition-transform duration-200 ${
 								mobileMenuOpen ? "translate-x-0" : "-translate-x-full"
 							}`}
 						>
@@ -735,7 +739,7 @@ function App() {
 			)}
 
 			{/* Main content */}
-			<div className="relative flex-1 flex flex-col min-w-0">
+			<div className="relative z-10 flex-1 flex flex-col min-w-0 md:rounded-2xl md:overflow-hidden md:panel-raised">
 				{/* Remote connection status (browser mode only) */}
 				<RemoteConnectionBar />
 
