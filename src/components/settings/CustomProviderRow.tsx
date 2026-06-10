@@ -16,6 +16,13 @@
  *     issue's reporter asked for "a local server", not "many endpoints".
  *     If we later want to support N endpoints, the sidecar already
  *     handles it — only this component is single-slot.
+ *
+ * UX (#207 follow-up): the form asks for only a base URL + optional API
+ * key. On Save the sidecar probes the server's OpenAI `GET /models`
+ * endpoint and stores *every* model it reports — one local server can host
+ * many models. If discovery finds nothing (server has no /models route, or
+ * is unreachable) the sidecar replies `NO_MODELS_DISCOVERED:<reachable>` and
+ * we reveal a manual model-id field so the provider can still be saved.
  */
 
 import type { CustomProvider, SaveCustomProviderInput } from "@/types/auth";
@@ -27,6 +34,12 @@ import { useCallback, useEffect, useId, useState } from "react";
 const ease = [0.16, 1, 0.3, 1] as const;
 const PROVIDER_ID = "custom-local-llm";
 const PROVIDER_NAME = "Custom Local LLM";
+const NO_MODELS_PREFIX = "NO_MODELS_DISCOVERED";
+
+/** Split a free-text model-id list (commas / whitespace / newlines) into ids. */
+function parseModelIds(raw: string): string[] {
+	return [...new Set(raw.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean))];
+}
 
 interface Props {
 	onChange?: () => void;
@@ -36,7 +49,10 @@ export function CustomProviderRow({ onChange }: Props) {
 	const [expanded, setExpanded] = useState(false);
 	const [existing, setExisting] = useState<CustomProvider[]>([]);
 	const [baseUrl, setBaseUrl] = useState("");
-	const [modelId, setModelId] = useState("");
+	// Manual model-id entry is a fallback: hidden until discovery comes up
+	// empty, then revealed so the user can type the ids themselves.
+	const [manualMode, setManualMode] = useState(false);
+	const [manualModels, setManualModels] = useState("");
 	const [apiKey, setApiKey] = useState("");
 	const [showKey, setShowKey] = useState(false);
 	const [saving, setSaving] = useState(false);
@@ -44,7 +60,7 @@ export function CustomProviderRow({ onChange }: Props) {
 	const [error, setError] = useState<string | null>(null);
 	const reduced = useReducedMotion();
 	const baseUrlId = useId();
-	const modelIdId = useId();
+	const manualModelsId = useId();
 	const apiKeyId = useId();
 
 	const refresh = useCallback(async () => {
@@ -72,13 +88,19 @@ export function CustomProviderRow({ onChange }: Props) {
 	// (the sidecar preserves it; see save_custom_provider).
 	const startEdit = useCallback((p: CustomProvider) => {
 		setBaseUrl(p.baseUrl);
-		setModelId(p.models[0]?.id ?? "");
+		// Prefill the manual field with the saved ids, but keep it hidden — a
+		// re-save re-discovers unless the user opts back into manual entry.
+		setManualModels(p.models.map((m) => m.id).join(", "));
+		setManualMode(false);
 		setApiKey("");
 		setError(null);
 		setExpanded(true);
 	}, []);
 
-	const canSave = baseUrl.trim().length > 0 && modelId.trim().length > 0 && !saving;
+	const canSave =
+		baseUrl.trim().length > 0 &&
+		!saving &&
+		(!manualMode || parseModelIds(manualModels).length > 0);
 
 	const handleSave = useCallback(async () => {
 		if (!canSave) return;
@@ -91,7 +113,9 @@ export function CustomProviderRow({ onChange }: Props) {
 			// Empty string ⇒ undefined so the sidecar substitutes its
 			// sentinel placeholder — the UI never invents a fake key.
 			apiKey: apiKey.trim() ? apiKey.trim() : undefined,
-			models: [{ id: modelId.trim() }],
+			// Empty array ⇒ "discover models from the server". A populated array
+			// is the manual-entry fallback.
+			models: manualMode ? parseModelIds(manualModels).map((id) => ({ id })) : [],
 		};
 		try {
 			await invoke("save_custom_provider", { provider: payload });
@@ -105,11 +129,22 @@ export function CustomProviderRow({ onChange }: Props) {
 				setExpanded(false);
 			}, 1200);
 		} catch (err) {
-			setError(err instanceof Error ? err.message : String(err));
+			const msg = err instanceof Error ? err.message : String(err);
+			if (msg.startsWith(NO_MODELS_PREFIX)) {
+				// Discovery found nothing — reveal manual entry instead of failing.
+				setManualMode(true);
+				setError(
+					msg.endsWith("unreachable")
+						? "Couldn't reach that endpoint. Check the URL, or enter model IDs manually below."
+						: "No models were auto-discovered at this endpoint. Enter one or more model IDs below.",
+				);
+			} else {
+				setError(msg);
+			}
 		} finally {
 			setSaving(false);
 		}
-	}, [canSave, baseUrl, modelId, apiKey, onChange, refresh]);
+	}, [canSave, baseUrl, manualMode, manualModels, apiKey, onChange, refresh]);
 
 	const handleDelete = useCallback(
 		async (id: string) => {
@@ -137,7 +172,7 @@ export function CustomProviderRow({ onChange }: Props) {
 					const next = !expanded;
 					// Opening with a provider already saved → prefill it for editing
 					// (unless the user already has unsaved input in the form).
-					if (next && editingExisting && !baseUrl && !modelId) {
+					if (next && editingExisting && !baseUrl) {
 						startEdit(existing[0]);
 					} else {
 						setExpanded(next);
@@ -219,7 +254,8 @@ export function CustomProviderRow({ onChange }: Props) {
 						>
 							<p className="text-[11px] text-muted-foreground pt-3 pb-2.5 leading-relaxed">
 								Connect to any OpenAI-compatible endpoint — Ollama, LM Studio, vLLM, llama.cpp{" "}
-								<code>--server</code>, a private gateway, …
+								<code>--server</code>, a private gateway, … We'll detect the available models for
+								you on save.
 							</p>
 
 							{/* Base URL */}
@@ -240,23 +276,34 @@ export function CustomProviderRow({ onChange }: Props) {
 								}}
 							/>
 
-							{/* Model ID */}
-							<label htmlFor={modelIdId} className="block text-[11px] mb-1 text-muted-foreground">
-								Model ID
-							</label>
-							<input
-								id={modelIdId}
-								type="text"
-								value={modelId}
-								onChange={(e) => setModelId(e.target.value)}
-								placeholder="llama3.1:8b"
-								className="w-full text-[12px] font-mono px-3 py-2 mb-2 rounded-md border focus:outline-none transition-colors"
-								style={{
-									background: "hsl(var(--background))",
+							{/* Model IDs — only shown as a fallback when auto-discovery finds
+							    nothing, or when editing an endpoint that has no /models route. */}
+							{manualMode && (
+								<>
+									<label
+										htmlFor={manualModelsId}
+									className="block text-[11px] mb-1 text-muted-foreground"
+								>
+									Model IDs
+								</label>
+								<input
+									id={manualModelsId}
+									type="text"
+									value={manualModels}
+									onChange={(e) => setManualModels(e.target.value)}
+									placeholder="llama3.1:8b, mistral:7b"
+									className="w-full text-[12px] font-mono px-3 py-2 mb-1 rounded-md border focus:outline-none transition-colors"
+									style={{
+										background: "hsl(var(--background))",
 									borderColor: error ? "hsl(var(--destructive))" : "hsl(var(--border))",
 									color: "hsl(var(--foreground))",
 								}}
-							/>
+								/>
+								<p className="text-[10px] text-muted-foreground/70 mb-2">
+									Comma- or space-separated. Used because this endpoint didn't expose a model list.
+								</p>
+								</>
+							)}
 
 							{/* API key (optional) */}
 							<label htmlFor={apiKeyId} className="block text-[11px] mb-1 text-muted-foreground">
