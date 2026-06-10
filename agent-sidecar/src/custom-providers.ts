@@ -23,6 +23,23 @@ import { dirname } from "node:path";
 /** Sentinel stored when the user leaves the API-key field blank. See header. */
 export const NO_AUTH_SENTINEL = "no-auth";
 
+/**
+ * Zosma-managed provider ids that live in the shared ~/.pi/agent/models.json
+ * but are NOT user-created via the Cowork "Custom Local LLM" UI.
+ *
+ * Since Option A (Cowork shares pi's models.json instead of a private copy),
+ * these core providers sit alongside genuinely-custom entries. They must be
+ * excluded from listCustomProviders so the settings panel only shows — and
+ * only lets the user delete — providers they themselves added. Without this
+ * guard the panel renders undeletable-looking rows and could even let the
+ * user remove the Claude (zosmaai) provider. See Option A migration.
+ */
+export const RESERVED_PROVIDER_IDS: ReadonlySet<string> = new Set([
+	"zosmaai",
+	"local-qwen",
+	"opencode-go",
+]);
+
 /** Input shape the sidecar accepts from the Tauri layer. */
 export interface SaveCustomProviderInput {
 	/** Slug used as the providers map key (e.g. "custom-local-llm"). */
@@ -101,6 +118,83 @@ function normaliseBaseUrl(raw: string): string {
 	return trimmed.replace(/\/+$/, "");
 }
 
+/**
+ * OpenAI-compatible model-list endpoints to probe, in priority order.
+ *
+ * Users may enter the base URL with or without the `/v1` suffix. pi-ai itself
+ * appends the wire path, so the stored baseUrl can be either form. For
+ * discovery we try `{base}/models` first (correct when the URL already ends
+ * in `/v1`), then `{base}/v1/models` (correct when they typed just the host).
+ */
+export function modelsEndpoints(baseUrl: string): string[] {
+	const base = baseUrl.replace(/\/+$/, "");
+	const urls = [`${base}/models`];
+	if (!/\/v\d+$/.test(base)) urls.push(`${base}/v1/models`);
+	return [...new Set(urls)];
+}
+
+/** Result of probing a server's OpenAI-compatible `/models` endpoint. */
+export interface DiscoverModelsResult {
+	/** Deduped model ids reported by the server (empty when none found). */
+	models: string[];
+	/**
+	 * True once *any* probe connected to the server — even a 404. Lets the UI
+	 * tell "endpoint reachable but exposes no /models" (→ offer manual entry)
+	 * apart from "couldn't connect at all" (→ likely a wrong URL).
+	 */
+	reachable: boolean;
+}
+
+/**
+ * Probe an OpenAI-compatible server for the models it serves. Used by the
+ * save flow so the user supplies only a base URL + optional key and we fill
+ * in the model list automatically (Ollama, LM Studio, vLLM, llama.cpp all
+ * implement `GET /v1/models`).
+ *
+ * Network failures are swallowed into `{ models: [], reachable }` so the
+ * caller can offer a manual-entry fallback; only a malformed base URL throws.
+ */
+export async function discoverModels(
+	baseUrl: string,
+	apiKey?: string,
+	opts: { timeoutMs?: number; fetchImpl?: typeof fetch } = {},
+): Promise<DiscoverModelsResult> {
+	const base = normaliseBaseUrl(baseUrl); // throws on invalid/non-http(s) URL
+	const doFetch = opts.fetchImpl ?? fetch;
+	const timeoutMs = opts.timeoutMs ?? 8000;
+	const headers: Record<string, string> = { Accept: "application/json" };
+	if (apiKey && apiKey !== NO_AUTH_SENTINEL && apiKey.trim().length > 0) {
+		headers.Authorization = `Bearer ${apiKey.trim()}`;
+	}
+
+	let reachable = false;
+	for (const url of modelsEndpoints(base)) {
+		try {
+			const res = await doFetch(url, {
+				headers,
+				signal: AbortSignal.timeout(timeoutMs),
+			});
+			reachable = true; // we connected, regardless of status
+			if (!res.ok) continue;
+			const json: unknown = await res.json();
+			// OpenAI shape: { object: "list", data: [{ id }] }. Some servers
+			// return a bare array. Accept both; ignore entries without a string id.
+			const rows = Array.isArray(json)
+				? json
+				: Array.isArray((json as { data?: unknown })?.data)
+					? (json as { data: unknown[] }).data
+					: [];
+			const ids = rows
+				.map((r) => (r && typeof (r as { id?: unknown }).id === "string" ? (r as { id: string }).id : null))
+				.filter((id): id is string => id !== null && id.trim().length > 0);
+			if (ids.length > 0) return { models: [...new Set(ids)], reachable: true };
+		} catch {
+			// Connection refused / DNS / timeout / bad JSON — try the next URL.
+		}
+	}
+	return { models: [], reachable };
+}
+
 function validateInput(input: SaveCustomProviderInput): {
 	id: string;
 	name: string;
@@ -165,6 +259,9 @@ export function saveCustomProvider(modelsPath: string, input: SaveCustomProvider
 /** Remove a provider entry. No-op when missing. */
 export function deleteCustomProvider(modelsPath: string, providerId: string): void {
 	if (!existsSync(modelsPath)) return;
+	// Never remove a Zosma-managed core provider (Claude, local-qwen, …), even
+	// if a stale build or bad RPC asks us to. See RESERVED_PROVIDER_IDS.
+	if (RESERVED_PROVIDER_IDS.has(providerId)) return;
 	const config = readConfig(modelsPath);
 	if (!(providerId in config.providers)) return;
 	delete config.providers[providerId];
@@ -176,6 +273,9 @@ export function listCustomProviders(modelsPath: string): CustomProviderSummary[]
 	const config = readConfig(modelsPath);
 	const out: CustomProviderSummary[] = [];
 	for (const [id, raw] of Object.entries(config.providers)) {
+		// Skip Zosma-managed core providers that live in the shared models.json
+		// but were not created via the Cowork UI (see RESERVED_PROVIDER_IDS).
+		if (RESERVED_PROVIDER_IDS.has(id)) continue;
 		// Be defensive: we only own entries that look like our shape (baseUrl +
 		// models array). pi-mono allows override-only entries against built-in
 		// providers — we deliberately skip those so the UI doesn't try to edit

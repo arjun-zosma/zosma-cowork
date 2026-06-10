@@ -21,7 +21,9 @@ import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	deleteCustomProvider,
+	discoverModels,
 	listCustomProviders,
+	modelsEndpoints,
 	saveCustomProvider,
 } from "./custom-providers.js";
 
@@ -234,6 +236,47 @@ describe("custom-providers", () => {
 		expect(listCustomProviders(modelsPath)).toEqual([]);
 	});
 
+	// Regression (Option A): after Cowork started sharing pi's ~/.pi/agent/
+	// models.json, the core Zosma-managed providers (zosmaai, local-qwen,
+	// opencode-go) live alongside UI-created ones. They must NOT surface in the
+	// "Custom Local LLM" panel — otherwise the user sees undeletable rows and
+	// could even delete the Claude provider. Only genuinely-custom entries show.
+	it("excludes Zosma-managed core providers (zosmaai, local-qwen, opencode-go)", () => {
+		writeFileSync(
+			modelsPath,
+			JSON.stringify({
+				providers: {
+					zosmaai: {
+						name: "zosmaai",
+						baseUrl: "http://devserver.zosma.ai:8787",
+						apiKey: "k",
+						api: "anthropic-messages",
+						models: [{ id: "claude-opus-4-8", name: "Claude Opus 4.8" }],
+					},
+					"local-qwen": {
+						name: "local-qwen",
+						baseUrl: "http://192.168.1.100:8001/v1",
+						apiKey: "k",
+						api: "openai-completions",
+						models: [{ id: "sidecar/Qwen3.5-2B", name: "Qwen 2B" }],
+					},
+					"opencode-go": {
+						name: "opencode-go",
+						baseUrl: "https://opencode.ai/zen/go/v1",
+						apiKey: "k",
+						api: "openai-completions",
+						models: [{ id: "deepseek-v4-flash", name: "DeepSeek" }],
+					},
+				},
+			}),
+		);
+		// Add a genuine UI-created custom provider on top.
+		saveCustomProvider(modelsPath, VALID_INPUT);
+
+		const list = listCustomProviders(modelsPath);
+		expect(list.map((p) => p.id)).toEqual(["custom-local-llm"]);
+	});
+
 	// ── deleteCustomProvider ───────────────────────────────────────────
 
 	it("removes the entry and leaves siblings intact", () => {
@@ -263,6 +306,28 @@ describe("custom-providers", () => {
 
 	it("is a no-op when models.json doesn't exist", () => {
 		expect(() => deleteCustomProvider(modelsPath, "anything")).not.toThrow();
+	});
+
+	// Defense-in-depth: even if some code path passes a reserved id, the core
+	// Zosma-managed providers (Claude etc.) must never be removed.
+	it("refuses to delete a Zosma-managed core provider", () => {
+		writeFileSync(
+			modelsPath,
+			JSON.stringify({
+				providers: {
+					zosmaai: {
+						name: "zosmaai",
+						baseUrl: "http://devserver.zosma.ai:8787",
+						apiKey: "k",
+						api: "anthropic-messages",
+						models: [{ id: "claude-opus-4-8" }],
+					},
+				},
+			}),
+		);
+		deleteCustomProvider(modelsPath, "zosmaai");
+		const config = JSON.parse(readFileSync(modelsPath, "utf-8"));
+		expect(config.providers.zosmaai).toBeDefined();
 	});
 
 	// ── ROUND-TRIP with the real pi-coding-agent ModelRegistry ─────────
@@ -313,5 +378,106 @@ describe("custom-providers", () => {
 
 		expect(registry.getError()).toBeUndefined();
 		expect(registry.getAll().some((m) => m.provider === "custom-local-llm")).toBe(true);
+	});
+});
+
+// ── discoverModels ────────────────────────────────────────────────────
+//
+// The new UX collects only a base URL + optional key and asks the server
+// which models it serves (OpenAI `GET /v1/models`). These tests stub fetch
+// so they never touch the network.
+
+/** Build a minimal Response-like object for the fake fetch. */
+function fakeResponse(body: unknown, ok = true): Response {
+	return {
+		ok,
+		json: async () => body,
+	} as unknown as Response;
+}
+
+describe("modelsEndpoints", () => {
+	it("probes /models first when the base URL already ends in /v1", () => {
+		expect(modelsEndpoints("http://localhost:11434/v1")).toEqual([
+			"http://localhost:11434/v1/models",
+		]);
+	});
+
+	it("falls back to /v1/models when the base URL has no version suffix", () => {
+		expect(modelsEndpoints("http://127.0.0.1:8080")).toEqual([
+			"http://127.0.0.1:8080/models",
+			"http://127.0.0.1:8080/v1/models",
+		]);
+	});
+});
+
+describe("discoverModels", () => {
+	it("returns the ids from an OpenAI { data: [{ id }] } response", async () => {
+		const fetchImpl = async () =>
+			fakeResponse({ object: "list", data: [{ id: "llama3.1:8b" }, { id: "mistral:7b" }] });
+		const res = await discoverModels("http://localhost:11434/v1", undefined, { fetchImpl });
+		expect(res).toEqual({ models: ["llama3.1:8b", "mistral:7b"], reachable: true });
+	});
+
+	it("accepts a bare array response and dedupes ids", async () => {
+		const fetchImpl = async () => fakeResponse([{ id: "a" }, { id: "a" }, { id: "b" }]);
+		const res = await discoverModels("http://localhost:11434/v1", undefined, { fetchImpl });
+		expect(res.models).toEqual(["a", "b"]);
+	});
+
+	it("tries /v1/models after /models 404s for a host-only base URL", async () => {
+		const seen: string[] = [];
+		const fetchImpl = async (url: string | URL | Request) => {
+			const u = String(url);
+			seen.push(u);
+			if (u.endsWith("/v1/models")) return fakeResponse({ data: [{ id: "phi3" }] });
+			return fakeResponse({}, false); // 404 on the bare /models probe
+		};
+		const res = await discoverModels("http://127.0.0.1:8080", undefined, {
+			fetchImpl: fetchImpl as unknown as typeof fetch,
+		});
+		expect(seen).toEqual(["http://127.0.0.1:8080/models", "http://127.0.0.1:8080/v1/models"]);
+		expect(res).toEqual({ models: ["phi3"], reachable: true });
+	});
+
+	it("reports reachable:true but no models when every probe 404s", async () => {
+		const fetchImpl = async () => fakeResponse({}, false);
+		const res = await discoverModels("http://127.0.0.1:8080", undefined, { fetchImpl });
+		expect(res).toEqual({ models: [], reachable: true });
+	});
+
+	it("reports reachable:false when the server can't be connected to", async () => {
+		const fetchImpl = async () => {
+			throw new Error("ECONNREFUSED");
+		};
+		const res = await discoverModels("http://127.0.0.1:8080", undefined, { fetchImpl });
+		expect(res).toEqual({ models: [], reachable: false });
+	});
+
+	it("sends a Bearer header when an API key is supplied", async () => {
+		let authHeader: string | undefined;
+		const fetchImpl = async (_url: string | URL | Request, init?: RequestInit) => {
+			authHeader = (init?.headers as Record<string, string>)?.Authorization;
+			return fakeResponse({ data: [{ id: "x" }] });
+		};
+		await discoverModels("https://gw.example/v1", "sk-test-1234", {
+			fetchImpl: fetchImpl as unknown as typeof fetch,
+		});
+		expect(authHeader).toBe("Bearer sk-test-1234");
+	});
+
+	it("omits the auth header for a blank key or the no-auth sentinel", async () => {
+		let authHeader: string | undefined = "set";
+		const fetchImpl = async (_url: string | URL | Request, init?: RequestInit) => {
+			authHeader = (init?.headers as Record<string, string>)?.Authorization;
+			return fakeResponse({ data: [{ id: "x" }] });
+		};
+		await discoverModels("https://gw.example/v1", "no-auth", {
+			fetchImpl: fetchImpl as unknown as typeof fetch,
+		});
+		expect(authHeader).toBeUndefined();
+	});
+
+	it("throws on a malformed base URL (a real validation error, not a network miss)", async () => {
+		await expect(discoverModels("not-a-url")).rejects.toThrow(/valid URL/);
 	});
 });
