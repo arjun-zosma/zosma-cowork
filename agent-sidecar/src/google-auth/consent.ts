@@ -108,23 +108,27 @@ export async function runConsent(opts: ConsentOptions): Promise<ConsentResult> {
 			};
 
 			if (err) {
-				finish(400, htmlPage("Connection failed", `Google returned: ${escapeHtml(err)}`));
+				finish(400, htmlPage("Connection failed", `Google returned: ${escapeHtml(err)}`, false));
 				reject(new Error(`Google consent error: ${err}`));
 				return;
 			}
 			if (!returnedState || returnedState !== state) {
-				finish(400, htmlPage("Connection failed", "State mismatch — please try again."));
+				finish(400, htmlPage("Connection failed", "State mismatch — please try again.", false));
 				reject(new Error("OAuth state mismatch"));
 				return;
 			}
 			if (!returnedCode) {
-				finish(400, htmlPage("Connection failed", "No authorization code returned."));
+				finish(400, htmlPage("Connection failed", "No authorization code returned.", false));
 				reject(new Error("No authorization code returned"));
 				return;
 			}
 			finish(
 				200,
-				htmlPage("Google connected", "You can close this tab and return to Zosma Cowork."),
+				htmlPage(
+					"Google connected",
+					"You can close this tab and return to Zosma Cowork.",
+					true,
+				),
 			);
 			resolve(returnedCode);
 		});
@@ -219,10 +223,45 @@ function escapeHtml(s: string): string {
 	});
 }
 
-function htmlPage(title: string, message: string): string {
-	return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(
-		title,
-	)}</title><style>body{font-family:system-ui,sans-serif;background:#0b0b0f;color:#e8e8ea;display:grid;place-items:center;height:100vh;margin:0}main{text-align:center;max-width:28rem;padding:2rem}h1{font-size:1.25rem;margin:0 0 .5rem}p{opacity:.7}</style></head><body><main><h1>${escapeHtml(
-		title,
-	)}</h1><p>${escapeHtml(message)}</p></main></body></html>`;
+/**
+ * Branded loopback landing page shown in the user's browser after consent.
+ * `ok` toggles the success (animated tick) vs error (animated cross) variant.
+ * Fully self-contained: inline CSS + SVG + keyframes, no network deps, so it
+ * renders instantly and offline. Brand: Zosma blue (#017cf3 → #3080ff) on the
+ * app's dark canvas (#0b0b0f).
+ */
+function htmlPage(title: string, message: string, ok = true): string {
+	const t = escapeHtml(title);
+	const m = escapeHtml(message);
+	const icon = ok
+		? `<svg class="glyph" viewBox="0 0 52 52" aria-hidden="true"><path class="tick" fill="none" d="M14 27l8 8 16-17"/></svg>`
+		: `<svg class="glyph" viewBox="0 0 52 52" aria-hidden="true"><path class="tick" fill="none" d="M18 18l16 16"/><path class="tick tick2" fill="none" d="M34 18l-16 16"/></svg>`;
+	return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${t} · Zosma Cowork</title><style>
+:root{--blue:#017cf3;--blue2:#3080ff;--ok:#017cf3;--ok2:#3080ff;--err:#f5455c;--err2:#ff6b7a;--ink:#e8eaf0;--mut:#9aa3b2}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;font-family:'Space Grotesk',system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:var(--ink);background:#0b0b0f;display:grid;place-items:center;overflow:hidden}
+body::before{content:"";position:fixed;inset:0;background:radial-gradient(60rem 60rem at 50% -10%,rgba(${ok ? "1,124,243" : "245,69,92"},.18),transparent 60%),radial-gradient(40rem 40rem at 50% 120%,rgba(48,128,255,.10),transparent 60%);pointer-events:none}
+main{position:relative;text-align:center;max-width:30rem;padding:2.5rem 2rem;animation:rise .6s cubic-bezier(.16,1,.3,1) both}
+.badge{position:relative;width:104px;height:104px;margin:0 auto 1.6rem;display:grid;place-items:center}
+.ring{position:absolute;inset:0;border-radius:50%;background:linear-gradient(145deg,var(--${ok ? "ok" : "err"}),var(--${ok ? "ok2" : "err2"}));box-shadow:0 12px 40px rgba(${ok ? "1,124,243" : "245,69,92"},.45),inset 0 0 0 1px rgba(255,255,255,.18);animation:pop .55s cubic-bezier(.34,1.56,.64,1) .05s both}
+.pulse{position:absolute;inset:0;border-radius:50%;border:2px solid rgba(${ok ? "1,124,243" : "245,69,92"},.5);animation:pulse 2.2s ease-out infinite}
+.pulse.d{animation-delay:1.1s}
+.glyph{position:relative;width:56px;height:56px;stroke:#fff;stroke-width:5;stroke-linecap:round;stroke-linejoin:round}
+.tick{stroke-dasharray:48;stroke-dashoffset:48;animation:draw .5s cubic-bezier(.65,0,.45,1) .42s forwards}
+.tick2{animation-delay:.58s}
+h1{font-family:'Chakra Petch','Space Grotesk',system-ui,sans-serif;font-weight:600;font-size:1.5rem;letter-spacing:.01em;margin:0 0 .5rem}
+p{margin:0;color:var(--mut);font-size:.98rem;line-height:1.5}
+.brand{margin-top:2rem;display:inline-flex;align-items:center;gap:.55rem;color:var(--mut);font-size:.72rem;letter-spacing:.22em;text-transform:uppercase;opacity:.8}
+.dot{width:8px;height:8px;border-radius:50%;background:linear-gradient(145deg,var(--blue),var(--blue2));box-shadow:0 0 10px rgba(1,124,243,.8)}
+@keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+@keyframes pop{0%{transform:scale(0);opacity:0}60%{opacity:1}100%{transform:scale(1);opacity:1}}
+@keyframes draw{to{stroke-dashoffset:0}}
+@keyframes pulse{0%{transform:scale(1);opacity:.6}100%{transform:scale(1.7);opacity:0}}
+@media(prefers-reduced-motion:reduce){*{animation:none!important}.tick{stroke-dashoffset:0}}
+</style></head><body><main>
+<div class="badge">${ok ? '<span class="pulse"></span><span class="pulse d"></span>' : ""}<span class="ring"></span>${icon}</div>
+<h1>${t}</h1><p>${m}</p>
+<div class="brand"><span class="dot"></span>Zosma Cowork</div>
+</main></body></html>`;
 }
