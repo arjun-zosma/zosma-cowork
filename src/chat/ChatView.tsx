@@ -1,5 +1,6 @@
 import { ChatMessageItem } from "@/components/ChatMessage";
 import { ErrorBanner } from "@/components/ErrorBanner";
+import { InThreadFind } from "@/components/InThreadFind";
 import { MessageInput } from "@/components/MessageInput";
 import { StatusLine } from "@/components/StatusLine";
 import { SuggestedActions } from "@/components/SuggestedActions";
@@ -8,7 +9,8 @@ import { findModel } from "@/lib/model-key";
 import type { SessionStats, ThinkingState } from "@/lib/sessionStats";
 import type { ChatMessage, ModelInfo } from "@/types";
 import type { Command } from "@/types/commands";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useReducedMotion } from "motion/react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 export type StreamStateStatus = "idle" | "thinking" | "tool_call" | "responding" | "error";
 
@@ -79,6 +81,102 @@ export function ChatView({
 	const isUserScrolledUp = useRef(false);
 	const [detailsExpanded, setDetailsExpanded] = useState(false);
 
+	// ── In-thread find (Cmd/Ctrl+F) ──
+	const [findOpen, setFindOpen] = useState(false);
+	const [findQuery, setFindQuery] = useState("");
+	const [activeMatch, setActiveMatch] = useState(0);
+	const reducedScroll = useReducedMotion();
+
+	// Flat, top-to-bottom list of every match (one entry per occurrence).
+	const findMatches = useMemo(() => {
+		const q = findQuery.trim().toLowerCase();
+		if (!findOpen || !q) return [] as Array<{ messageId: string; localIndex: number }>;
+		const out: Array<{ messageId: string; localIndex: number }> = [];
+		for (const m of messages) {
+			const text = typeof m.content === "string" ? m.content.toLowerCase() : "";
+			if (!text) continue;
+			let from = 0;
+			let local = 0;
+			let at = text.indexOf(q, from);
+			while (at !== -1) {
+				out.push({ messageId: m.id, localIndex: local });
+				local++;
+				from = at + q.length;
+				at = text.indexOf(q, from);
+			}
+		}
+		return out;
+	}, [messages, findQuery, findOpen]);
+
+	// Reset to the first match whenever the query changes.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: intentional reset on query change
+	useEffect(() => {
+		setActiveMatch(0);
+	}, [findQuery]);
+
+	// Keep the active pointer in range as matches shift.
+	const safeActive = findMatches.length === 0 ? 0 : Math.min(activeMatch, findMatches.length - 1);
+	const activeEntry = findMatches[safeActive];
+
+	// Open find with Cmd/Ctrl+F.
+	useEffect(() => {
+		function onKey(e: KeyboardEvent) {
+			if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
+				e.preventDefault();
+				setFindOpen(true);
+			}
+		}
+		window.addEventListener("keydown", onKey);
+		return () => window.removeEventListener("keydown", onKey);
+	}, []);
+
+	// Close + clear find when switching sessions.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: reset on session change
+	useEffect(() => {
+		setFindOpen(false);
+		setFindQuery("");
+		setActiveMatch(0);
+	}, [sessionKey]);
+
+	// Scroll the active match (or its message) into view.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: scroll on active match change
+	useEffect(() => {
+		if (!findOpen || findMatches.length === 0 || !activeEntry) return;
+		const container = scrollContainerRef.current;
+		if (!container) return;
+		const behavior: ScrollBehavior = reducedScroll ? "auto" : "smooth";
+		const active = container.querySelector('[data-find-active="true"]');
+		if (active) {
+			active.scrollIntoView({ block: "center", behavior });
+			return;
+		}
+		const esc =
+			typeof CSS !== "undefined" && CSS.escape
+				? CSS.escape(activeEntry.messageId)
+				: activeEntry.messageId;
+		const msgEl = container.querySelector(`[data-message-id="${esc}"]`);
+		msgEl?.scrollIntoView({ block: "center", behavior });
+	}, [safeActive, findMatches.length, findOpen]);
+
+	const goNextMatch = useCallback(() => {
+		setActiveMatch((i) => {
+			const n = findMatches.length;
+			return n === 0 ? 0 : (i + 1) % n;
+		});
+	}, [findMatches.length]);
+	const goPrevMatch = useCallback(() => {
+		setActiveMatch((i) => {
+			const n = findMatches.length;
+			return n === 0 ? 0 : (i - 1 + n) % n;
+		});
+	}, [findMatches.length]);
+	const closeFind = useCallback(() => {
+		setFindOpen(false);
+		setFindQuery("");
+	}, []);
+
+	const findTerm = findOpen && findQuery.trim() ? findQuery.trim() : undefined;
+
 	// Ctrl+O toggles expanded detail view (thinking, tool calls)
 	useEffect(() => {
 		function handleKeyDown(e: KeyboardEvent) {
@@ -135,7 +233,17 @@ export function ChatView({
 	];
 
 	return (
-		<div className="chat-font flex flex-col flex-1 min-h-0">
+		<div className="chat-font relative flex flex-col flex-1 min-h-0">
+			<InThreadFind
+				open={findOpen}
+				query={findQuery}
+				current={findMatches.length === 0 ? 0 : safeActive + 1}
+				total={findMatches.length}
+				onQueryChange={setFindQuery}
+				onNext={goNextMatch}
+				onPrev={goPrevMatch}
+				onClose={closeFind}
+			/>
 			<div
 				ref={scrollContainerRef}
 				onScroll={handleScroll}
@@ -146,14 +254,23 @@ export function ChatView({
 					<SuggestedActions onSend={onSend} />
 				) : (
 					<div className="pt-1 pb-6">
-						{allMessages.map((msg) => (
-							<ChatMessageItem
-								key={msg.id}
-								message={msg}
-								detailsExpanded={detailsExpanded}
-								models={models}
-							/>
-						))}
+						{allMessages.map((msg) => {
+							const isStreaming = msg.id === streamingMessage?.id;
+							return (
+								<ChatMessageItem
+									key={msg.id}
+									message={msg}
+									detailsExpanded={detailsExpanded}
+									models={models}
+									findTerm={isStreaming ? undefined : findTerm}
+									activeFindIndex={
+										activeEntry && activeEntry.messageId === msg.id
+											? activeEntry.localIndex
+											: undefined
+									}
+								/>
+							);
+						})}
 						{/* Issue #201 PR3 follow-up: queued messages render AFTER
 						    streamingMessage — they are work the agent will do NEXT,
 						    so chronologically they belong below the current bubble.

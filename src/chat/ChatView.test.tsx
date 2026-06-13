@@ -1,5 +1,5 @@
 import { cleanupMocks } from "@/test/mocks";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitForElementToBeRemoved } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -217,5 +217,82 @@ describe("ChatView queued bubbles (#201 PR3 follow-up)", () => {
 		expect(screen.queryByText(/Steering\b/i)).not.toBeInTheDocument();
 		expect(screen.queryByText(/Follow-up\b/i)).not.toBeInTheDocument();
 		expect(screen.queryByText(/Ctrl\+↑ to edit/i)).not.toBeInTheDocument();
+	});
+});
+
+describe("ChatView in-thread find (#267)", () => {
+	afterEach(() => cleanupMocks());
+
+	const findProps = {
+		streamingMessage: null,
+		isRunning: false,
+		status: "idle" as const,
+		error: null,
+		onSend: vi.fn(),
+		onAbort: vi.fn(),
+		toolPhase: null,
+		messages: [
+			{ id: "m1", role: "user" as const, content: "How do I configure vite?", timestamp: 1 },
+			{
+				id: "m2",
+				role: "assistant" as const,
+				content: "Use the vite config to add plugins. vite is fast.",
+				timestamp: 2,
+			},
+		],
+	};
+
+	it("opens the find bar with Cmd/Ctrl+F and highlights matches", async () => {
+		const user = userEvent.setup();
+		const { container } = render(<ChatView {...findProps} />);
+		// Find bar is hidden until the shortcut.
+		expect(screen.queryByPlaceholderText("Find in conversation…")).not.toBeInTheDocument();
+
+		await user.keyboard("{Control>}f{/Control}");
+		const input = await screen.findByPlaceholderText("Find in conversation…");
+		await user.type(input, "vite");
+
+		// "vite" occurs 3× across the two messages → 3 highlighted marks.
+		const marks = container.querySelectorAll("mark.find-highlight");
+		expect(marks.length).toBe(3);
+		// Counter shows 1/3 and exactly one active mark.
+		expect(screen.getByText("1/3")).toBeInTheDocument();
+		expect(container.querySelectorAll('[data-find-active="true"]').length).toBe(1);
+	});
+
+	it("navigates matches with next/prev", async () => {
+		const user = userEvent.setup();
+		render(<ChatView {...findProps} />);
+		await user.keyboard("{Control>}f{/Control}");
+		const input = await screen.findByPlaceholderText("Find in conversation…");
+		await user.type(input, "vite");
+
+		expect(screen.getByText("1/3")).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Next match" }));
+		expect(screen.getByText("2/3")).toBeInTheDocument();
+		// Wrap-around: prev from 1 → 3.
+		await user.click(screen.getByRole("button", { name: "Previous match" }));
+		await user.click(screen.getByRole("button", { name: "Previous match" }));
+		expect(screen.getByText("3/3")).toBeInTheDocument();
+	});
+
+	it("shows 0/0 when nothing matches", async () => {
+		const user = userEvent.setup();
+		render(<ChatView {...findProps} />);
+		await user.keyboard("{Control>}f{/Control}");
+		const input = await screen.findByPlaceholderText("Find in conversation…");
+		await user.type(input, "zzz_nomatch");
+		expect(screen.getByText("0/0")).toBeInTheDocument();
+	});
+
+	it("closes the find bar via the close button", async () => {
+		const user = userEvent.setup();
+		render(<ChatView {...findProps} />);
+		await user.keyboard("{Control>}f{/Control}");
+		const input = await screen.findByPlaceholderText("Find in conversation…");
+		await user.click(screen.getByRole("button", { name: "Close find" }));
+		// AnimatePresence plays an exit animation before unmounting.
+		await waitForElementToBeRemoved(input);
+		expect(screen.queryByPlaceholderText("Find in conversation…")).not.toBeInTheDocument();
 	});
 });

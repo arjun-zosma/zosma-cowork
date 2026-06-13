@@ -128,6 +128,7 @@ import {
 	handleSteerCommand,
 } from "./steering.js";
 import { extractChatMessages } from "./extract-chat-messages.js";
+import * as sessionStore from "./session-store.js";
 import {
 	loadSettings as loadSettingsStore,
 	saveSettings as saveSettingsStore,
@@ -368,6 +369,32 @@ interface DeleteSessionCommand {
 	sessionFile: string;
 }
 
+interface RenameSessionCommand {
+	type: "rename_session";
+	id: string;
+	/** Session file name to rename */
+	sessionFile: string;
+	/** New user-chosen title. Marks the header titleLocked so auto-derivation
+	 * no longer overwrites it on subsequent saves. */
+	title: string;
+}
+
+interface SetSessionPinnedCommand {
+	type: "set_session_pinned";
+	id: string;
+	/** Session file name to pin/unpin */
+	sessionFile: string;
+	/** Desired pinned state */
+	pinned: boolean;
+}
+
+interface SearchSessionsCommand {
+	type: "search_sessions";
+	id: string;
+	/** Case-insensitive query matched against real message content. */
+	query: string;
+}
+
 interface NewSessionCommand {
 	type: "new_session";
 	id: string;
@@ -534,6 +561,9 @@ type Command =
 	| SaveSessionCommand
 	| LoadSessionCommand
 	| DeleteSessionCommand
+	| RenameSessionCommand
+	| SetSessionPinnedCommand
+	| SearchSessionsCommand
 	| NewSessionCommand
 	| GetWorkspaceCommand
 	| ListSessionsCommand
@@ -1016,87 +1046,14 @@ let remoteSessionFirstTs: number = 0;
 // ---------------------------------------------------------------------------
 
 /**
- * List all session files with their metadata headers.
- * Returns sorted by most recent first.
+ * Session persistence is implemented in ./session-store.ts (pure, unit-tested).
+ * These thin wrappers adapt the sidecar's `zosmaDir` to the store's
+ * sessions-directory API and keep the command dispatcher readable.
  */
-function listSessionFiles(zosmaDir: string): Array<{
-	file: string;
-	title: string;
-	model?: string;
-	provider?: string;
-	cwd?: string;
-	messageCount: number;
-	createdAt: number;
-	lastActivity: number;
-}> {
-	const sDir = sessionsDir(zosmaDir);
-	if (!existsSync(sDir)) return [];
-
-	const files = readdirSync(sDir)
-		.filter((f) => f.endsWith(".jsonl"))
-		.sort()
-		.reverse();
-
-	const sessions: Array<{
-		file: string;
-		title: string;
-		model?: string;
-		provider?: string;
-		cwd?: string;
-		messageCount: number;
-		createdAt: number;
-		lastActivity: number;
-	}> = [];
-
-	for (const file of files) {
-		try {
-			const filePath = join(sDir, file);
-			const content = readFileSync(filePath, "utf-8");
-			const lines = content.trim().split("\n");
-			if (lines.length === 0) continue;
-
-			// First line is header
-			const header = JSON.parse(lines[0]);
-			if (header.type !== "session") continue;
-
-			// Count messages (non-header lines)
-			const messageCount = lines.slice(1).filter((l) => l.trim()).length;
-
-			// Last activity is last message timestamp or header timestamp
-			let lastActivity = header.createdAt || 0;
-			if (lines.length > 1) {
-				try {
-					const lastLine = JSON.parse(lines[lines.length - 1]);
-					lastActivity = lastLine.timestamp || lastActivity;
-				} catch {
-					// ignore
-				}
-			}
-
-			sessions.push({
-				file,
-				title: header.title || file.replace(".jsonl", ""),
-				model: header.model,
-				provider: header.provider,
-				cwd: typeof header.cwd === "string" ? header.cwd : undefined,
-				messageCount,
-				createdAt: header.createdAt || 0,
-				lastActivity,
-			});
-		} catch (err) {
-			log("Error reading session %s: %s", file, err);
-		}
-	}
-
-	// Sort by lastActivity descending
-	sessions.sort((a, b) => b.lastActivity - a.lastActivity);
-	return sessions;
+function listSessionFiles(zosmaDir: string) {
+	return sessionStore.listSessions(sessionsDir(zosmaDir));
 }
 
-/**
- * Save messages to a session JSONL file.
- * Format: First line is header, subsequent lines are JSON message objects.
- */
 function saveSession(
 	zosmaDir: string,
 	sessionId: string,
@@ -1106,71 +1063,38 @@ function saveSession(
 	provider?: string,
 	cwd?: string,
 ): void {
-	const sDir = sessionsDir(zosmaDir);
-	ensureDir(sDir);
-
-	// Strip .jsonl if already present (sent from frontend which adds extension)
-	const cleanId = sessionId.replace(/\.jsonl$/i, "");
-	const filePath = join(sDir, `${cleanId}.jsonl`);
-	const header = {
-		type: "session",
-		version: 1,
+	sessionStore.saveSessionFile(
+		sessionsDir(zosmaDir),
+		sessionId,
 		title,
-		createdAt: Date.now(),
+		messages,
 		model,
 		provider,
-		// Workspace folder this conversation ran in, so resuming restores the
-		// same cwd. Absent on legacy sessions → they fall back to the default.
 		cwd,
-		messageCount: messages.length,
-	};
-
-	const lines = [JSON.stringify(header)];
-	for (const msg of messages) {
-		lines.push(JSON.stringify(msg));
-	}
-
-	writeFileSync(filePath, `${lines.join("\n")}\n`, "utf-8");
+	);
 	log("Saved session: %s (%d messages)", sessionId, messages.length);
 }
 
-/**
- * Load messages from a session file.
- * Returns the messages array (excluding the header).
- */
 function loadSessionMessages(zosmaDir: string, sessionFile: string): unknown[] {
-	const filePath = join(sessionsDir(zosmaDir), sessionFile);
-	if (!existsSync(filePath)) {
-		throw new Error(`Session not found: ${sessionFile}`);
-	}
-
-	const content = readFileSync(filePath, "utf-8");
-	const lines = content.trim().split("\n");
-	if (lines.length === 0) return [];
-
-	const messages: unknown[] = [];
-	for (let i = 1; i < lines.length; i++) {
-		const line = lines[i].trim();
-		if (line) {
-			try {
-				messages.push(JSON.parse(line));
-			} catch {
-				log("Skipping invalid JSON in session line %d", i + 1);
-			}
-		}
-	}
-	return messages;
+	return sessionStore.loadSessionMessages(sessionsDir(zosmaDir), sessionFile);
 }
 
-/**
- * Delete a session file.
- */
 function deleteSessionFile(zosmaDir: string, sessionFile: string): boolean {
-	const filePath = join(sessionsDir(zosmaDir), sessionFile);
-	if (!existsSync(filePath)) return false;
-	unlinkSync(filePath);
-	log("Deleted session: %s", sessionFile);
-	return true;
+	const ok = sessionStore.deleteSessionFile(sessionsDir(zosmaDir), sessionFile);
+	if (ok) log("Deleted session: %s", sessionFile);
+	return ok;
+}
+
+function renameSession(zosmaDir: string, sessionFile: string, title: string): boolean {
+	return sessionStore.renameSession(sessionsDir(zosmaDir), sessionFile, title);
+}
+
+function setSessionPinned(zosmaDir: string, sessionFile: string, pinned: boolean): boolean {
+	return sessionStore.setSessionPinned(sessionsDir(zosmaDir), sessionFile, pinned);
+}
+
+function searchSessions(zosmaDir: string, query: string) {
+	return sessionStore.searchSessions(sessionsDir(zosmaDir), query);
 }
 
 // ---------------------------------------------------------------------------
@@ -2749,6 +2673,27 @@ async function main() {
 						id: cmd.id,
 						data: { deleted },
 					});
+					break;
+				}
+
+				// ── rename_session ─────────────────────────────────────────
+				case "rename_session": {
+					const renamed = renameSession(zosmaDir, cmd.sessionFile, cmd.title);
+					send({ type: "result", id: cmd.id, data: { renamed } });
+					break;
+				}
+
+				// ── set_session_pinned ─────────────────────────────────────
+				case "set_session_pinned": {
+					const ok = setSessionPinned(zosmaDir, cmd.sessionFile, cmd.pinned);
+					send({ type: "result", id: cmd.id, data: { ok, pinned: cmd.pinned } });
+					break;
+				}
+
+				// ── search_sessions (deep content search) ──────────────────
+				case "search_sessions": {
+					const matches = searchSessions(zosmaDir, cmd.query);
+					send({ type: "result", id: cmd.id, data: { matches } });
 					break;
 				}
 

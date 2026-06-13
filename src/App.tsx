@@ -41,6 +41,12 @@ interface SessionEntry {
 	messageCount: number;
 	createdAt: number;
 	lastActivity: number;
+	/** Pinned sessions float to the top of the sidebar list. */
+	pinned?: boolean;
+	/** Whether the title was manually renamed (auto-titles won't overwrite). */
+	titleLocked?: boolean;
+	/** One-line preview of the latest message (real content, for the sidebar). */
+	preview?: string;
 }
 
 function App() {
@@ -388,17 +394,29 @@ function App() {
 				.then(() => loadSessionList())
 				.catch((err) => console.error("Failed to save session:", err));
 
-			// Optimistic sidebar entry (folder = active workspace).
+			// Optimistic sidebar entry (folder = active workspace). A user-renamed
+			// (locked) title must not be clobbered by the auto-derived one, and the
+			// pin state is preserved across the optimistic update.
 			setSessionEntries((prev) => {
+				const existing = prev.find((s) => s.file === sid);
 				const filtered = prev.filter((s) => s.file !== sid);
 				return [
 					{
 						file: sid,
-						title,
+						title: existing?.titleLocked ? existing.title : title,
 						cwd: workspaceCwd ?? undefined,
 						messageCount: merged.length,
-						createdAt: prev.find((s) => s.file === sid)?.createdAt || Date.now(),
+						createdAt: existing?.createdAt || Date.now(),
 						lastActivity: Date.now(),
+						pinned: existing?.pinned,
+						titleLocked: existing?.titleLocked,
+						preview:
+							typeof merged[merged.length - 1]?.content === "string"
+								? (merged[merged.length - 1].content as string)
+										.replace(/\s+/g, " ")
+										.trim()
+										.slice(0, 120)
+								: existing?.preview,
 					},
 					...filtered,
 				];
@@ -649,6 +667,52 @@ function App() {
 		}
 	}, [pendingDelete, activeSessionFile, dispatch]);
 
+	// ── Rename a session (sticky, user-chosen title) ──
+	// biome-ignore lint/correctness/useExhaustiveDependencies: loadSessionList is a stable component-scope reconcile helper
+	const handleRenameSession = useCallback(async (file: string, title: string) => {
+		const clean = title.trim();
+		if (!clean) return;
+		// Optimistic: update the sidebar immediately and lock the title so the
+		// auto-derive-on-save path won't clobber it before the disk reconcile.
+		setSessionEntries((prev) =>
+			prev.map((s) => (s.file === file ? { ...s, title: clean, titleLocked: true } : s)),
+		);
+		try {
+			await invoke("rename_session", { sessionFile: file, title: clean });
+			trackEvent("session_renamed");
+		} catch (err) {
+			console.error("Failed to rename session:", err);
+			loadSessionList().catch(() => {});
+		}
+	}, []);
+
+	// ── Pin / unpin a session ──
+	// biome-ignore lint/correctness/useExhaustiveDependencies: loadSessionList is a stable component-scope reconcile helper
+	const handlePinSession = useCallback(async (file: string, pinned: boolean) => {
+		setSessionEntries((prev) => prev.map((s) => (s.file === file ? { ...s, pinned } : s)));
+		try {
+			await invoke("set_session_pinned", { sessionFile: file, pinned });
+			trackEvent(pinned ? "session_pinned" : "session_unpinned");
+			// Reconcile so pinned-first ordering matches disk truth.
+			loadSessionList().catch(() => {});
+		} catch (err) {
+			console.error("Failed to pin session:", err);
+			loadSessionList().catch(() => {});
+		}
+	}, []);
+
+	// ── Deep content search across all session bodies ──
+	const handleDeepSearch = useCallback(async (query: string) => {
+		try {
+			const result = await invoke("search_sessions", { query });
+			const data = result as { matches?: { file: string; snippet: string; matchCount: number }[] };
+			return data.matches ?? [];
+		} catch (err) {
+			console.error("Deep search failed:", err);
+			return [];
+		}
+	}, []);
+
 	const handleSessionSelect = useCallback(
 		async (file: string) => {
 			if (file === activeSessionFile) return;
@@ -695,10 +759,13 @@ function App() {
 	const sidebarSessions = sessionEntries.map((s) => ({
 		id: s.file,
 		title: s.title,
-		lastMessage: `${s.messageCount} messages`,
+		// Prefer a real content preview; fall back to a count for empty sessions.
+		lastMessage: s.preview?.trim() ? s.preview : `${s.messageCount} messages`,
 		timestamp: s.lastActivity || s.createdAt,
 		active: s.file === activeSessionFile,
 		folder: s.cwd,
+		pinned: s.pinned,
+		titleLocked: s.titleLocked,
 	}));
 
 	return (
@@ -758,6 +825,9 @@ function App() {
 							}}
 							homeDir={homeDir ?? undefined}
 							onDeleteSession={handleDeleteSession}
+							onRenameSession={handleRenameSession}
+							onPinSession={handlePinSession}
+							onDeepSearch={handleDeepSearch}
 							onChangeView={(view) => {
 								setSidebarView(view);
 								if (view === "settings") {
@@ -808,6 +878,9 @@ function App() {
 								}}
 								homeDir={homeDir ?? undefined}
 								onDeleteSession={handleDeleteSession}
+								onRenameSession={handleRenameSession}
+								onPinSession={handlePinSession}
+								onDeepSearch={handleDeepSearch}
 								onChangeView={(view) => {
 									setSidebarView(view);
 									if (view === "settings") {

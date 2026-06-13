@@ -3,8 +3,9 @@ import type { ChatMessage as ChatMessageType, ModelInfo } from "@/types";
 import { invoke } from "@tauri-apps/api/core";
 import { Clipboard, Download, FolderOpen, User } from "lucide-react";
 import { useCallback, useState } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type Options as ReactMarkdownOptions } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { rehypeHighlightTerm } from "@/lib/rehypeHighlightTerm";
 import { ActivityBlock, ActivityRecap } from "./ActivityBlock";
 import { markdownComponents } from "./MarkdownComponents";
 import { FeedbackButtons } from "./FeedbackButtons";
@@ -16,6 +17,10 @@ interface ChatMessageProps {
 	detailsExpanded?: boolean;
 	/** Model catalog, used to show a friendly model name instead of raw id. */
 	models?: ModelInfo[];
+	/** Active in-thread find term; highlights matches in this message's content. */
+	findTerm?: string;
+	/** Index (within THIS message) of the occurrence to mark active, if any. */
+	activeFindIndex?: number;
 }
 
 /**
@@ -38,7 +43,13 @@ function extractFilePath(content: string): string | null {
 	return match?.[1]?.trim() ?? null;
 }
 
-export function ChatMessageItem({ message, detailsExpanded, models }: ChatMessageProps) {
+export function ChatMessageItem({
+	message,
+	detailsExpanded,
+	models,
+	findTerm,
+	activeFindIndex,
+}: ChatMessageProps) {
 	const [copied, setCopied] = useState(false);
 	const [saving, setSaving] = useState(false);
 	const isUser = message.role === "user";
@@ -113,8 +124,12 @@ export function ChatMessageItem({ message, detailsExpanded, models }: ChatMessag
 		);
 	}
 
+	const rehypePlugins: ReactMarkdownOptions["rehypePlugins"] = findTerm
+		? [[rehypeHighlightTerm, { term: findTerm, activeIndex: activeFindIndex }]]
+		: undefined;
+
 	return (
-		<div className="group px-4 py-1.5 animate-fade-in">
+		<div className="group px-4 py-1.5 animate-fade-in" data-message-id={message.id}>
 			<div
 				className={`chat-bubble ${
 					isUser ? "chat-bubble-user" : "chat-bubble-assistant"
@@ -215,7 +230,11 @@ export function ChatMessageItem({ message, detailsExpanded, models }: ChatMessag
 						className="chat-markdown"
 						style={{ color: isUser ? "hsl(var(--chat-user-fg))" : "hsl(var(--chat-assistant-fg))" }}
 					>
-						<ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+						<ReactMarkdown
+							remarkPlugins={[remarkGfm]}
+							rehypePlugins={rehypePlugins}
+							components={markdownComponents}
+						>
 							{message.content || ""}
 						</ReactMarkdown>
 						{message.isStreaming && (

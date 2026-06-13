@@ -1078,6 +1078,58 @@ async fn delete_session(session_file: String, s: State<'_, AppState>) -> Result<
     .await
 }
 
+/// Give a chat session a user-chosen title. The sidecar marks the header
+/// `titleLocked` so auto-derived titles never overwrite it again.
+#[tauri::command]
+async fn rename_session(
+    session_file: String,
+    title: String,
+    s: State<'_, AppState>,
+) -> Result<Value, String> {
+    scmd_r(
+        &s,
+        &serde_json::json!({
+            "type":"rename_session",
+            "id":"rn",
+            "sessionFile": session_file,
+            "title": title,
+        }),
+        std::time::Duration::from_secs(10),
+    )
+    .await
+}
+
+/// Pin or unpin a chat session (floats it to the top of the sidebar).
+#[tauri::command]
+async fn set_session_pinned(
+    session_file: String,
+    pinned: bool,
+    s: State<'_, AppState>,
+) -> Result<Value, String> {
+    scmd_r(
+        &s,
+        &serde_json::json!({
+            "type":"set_session_pinned",
+            "id":"pn",
+            "sessionFile": session_file,
+            "pinned": pinned,
+        }),
+        std::time::Duration::from_secs(10),
+    )
+    .await
+}
+
+/// Deep content search across all session bodies (not just titles).
+#[tauri::command]
+async fn search_sessions(query: String, s: State<'_, AppState>) -> Result<Value, String> {
+    scmd_r(
+        &s,
+        &serde_json::json!({"type":"search_sessions","id":"ss","query": query}),
+        std::time::Duration::from_secs(10),
+    )
+    .await
+}
+
 #[tauri::command]
 async fn new_session(cwd: Option<String>, s: State<'_, AppState>) -> Result<Value, String> {
     // `cwd` is the workspace folder the user picked (via the native folder
@@ -2046,6 +2098,9 @@ pub fn run() {
             save_session,
             load_session,
             delete_session,
+            rename_session,
+            set_session_pinned,
+            search_sessions,
             new_session,
             get_workspace,
             get_settings,

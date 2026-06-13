@@ -1,6 +1,6 @@
 import { MessageSquare, NotebookPen, Settings } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ConversationSearch } from "./ConversationSearch";
+import { ConversationSearch, type DeepSearchMatch } from "./ConversationSearch";
 import { PromptTemplates } from "./PromptTemplates";
 
 interface Session {
@@ -11,6 +11,10 @@ interface Session {
 	active?: boolean;
 	/** Workspace folder this session ran in (drives folder grouping). */
 	folder?: string;
+	/** Pinned sessions float to the top of the list. */
+	pinned?: boolean;
+	/** Whether the title was manually set. */
+	titleLocked?: boolean;
 }
 
 interface SidebarProps {
@@ -20,6 +24,12 @@ interface SidebarProps {
 	onSessionSelect: (id: string) => void;
 	onNewSession: () => void;
 	onDeleteSession: (id: string) => void;
+	/** Rename a session (sticky, user-chosen title). */
+	onRenameSession?: (id: string, title: string) => void;
+	/** Pin/unpin a session. */
+	onPinSession?: (id: string, pinned: boolean) => void;
+	/** Deep content search across message bodies. */
+	onDeepSearch?: (query: string) => Promise<DeepSearchMatch[]>;
 	onChangeView: (view: string) => void;
 	/** Load a prompt template into the composer for editing (does not send). */
 	onUseTemplate?: (prompt: string) => void;
@@ -42,6 +52,9 @@ export function Sidebar({
 	onSessionSelect,
 	onNewSession,
 	onDeleteSession,
+	onRenameSession,
+	onPinSession,
+	onDeepSearch,
 	onChangeView,
 	onUseTemplate,
 	homeDir,
@@ -126,6 +139,9 @@ export function Sidebar({
 								onSelect={onSessionSelect}
 								onNewSession={onNewSession}
 								onDeleteSession={onDeleteSession}
+								onRenameSession={onRenameSession}
+								onPinSession={onPinSession}
+								onDeepSearch={onDeepSearch}
 								homeDir={homeDir}
 							/>
 						</motion.div>

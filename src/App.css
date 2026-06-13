@@ -634,6 +634,21 @@ body[data-wallpaper]::before {
 	overflow-wrap: anywhere;
 }
 
+/* ── In-thread find: match highlighting ── */
+.find-highlight {
+	background: hsl(var(--primary) / 0.22);
+	color: inherit;
+	border-radius: 3px;
+	padding: 0 1px;
+	box-decoration-break: clone;
+	-webkit-box-decoration-break: clone;
+}
+.find-highlight-active {
+	background: hsl(var(--primary) / 0.85);
+	color: hsl(var(--primary-foreground));
+	box-shadow: 0 0 0 2px hsl(var(--primary) / 0.4);
+}
+
 /* First/last child: no stray outer margin */
 .chat-markdown > *:first-child {
 	margin-top: 0;
