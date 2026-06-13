@@ -273,6 +273,11 @@ cargo fmt          # Rust formatting
 cargo clippy       # Rust lints
 ```
 
+> **Designing UI?** Read **[`docs/DESIGN.md`](docs/DESIGN.md)** — the design
+> guideline / global standard for the elevated blue‑glass system (tokens,
+> surfaces, motion, controls, theming, and do/don'ts). Reuse it; don't invent a
+> new visual language.
+
 #### Styling: prefer Tailwind utilities over inline token colors
 
 Design tokens are mapped to Tailwind utilities in `src/App.css` via `@theme`

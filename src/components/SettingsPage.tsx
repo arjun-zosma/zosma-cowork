@@ -150,11 +150,11 @@ export function SettingsPage({
 				</div>
 			</div>
 
-			{/* ── Body: desktop sidebar + shared content ── */}
-			<div className="flex flex-1 min-h-0">
-				{/* Desktop sidebar */}
+			{/* ── Body: two floating glass panels (rail + content) like home ── */}
+			<div className="flex flex-1 min-h-0 md:gap-2.5">
+				{/* Desktop sidebar — rounded floating glass panel, same as home */}
 				<motion.aside
-					className="hidden md:flex flex-col shrink-0 settings-rail settings-rail-right"
+					className="hidden md:flex flex-col shrink-0 panel-sidebar overflow-hidden"
 					style={{ width: 220 }}
 					initial={reduced ? false : { x: -10, opacity: 0 }}
 					animate={{ x: 0, opacity: 1 }}
@@ -242,26 +242,29 @@ export function SettingsPage({
 					</div>
 				</motion.aside>
 
-				{/* ── Shared content area (desktop + mobile) ── */}
-				<main className="flex-1 min-w-0 overflow-y-auto">
-					<motion.div
-						key={activeSection}
-						className="w-full h-full"
-						initial={reduced ? { opacity: 0 } : { opacity: 0, x: xOffset }}
-						animate={{ opacity: 1, x: 0 }}
-						transition={{ duration: 0.2, ease: easeOutExpo }}
-					>
-						<div className="px-6 md:px-8 py-6 md:py-7">
-							<SectionContent
-								activeSection={activeSection}
-								onShowKeyEntry={onShowKeyEntry}
-								telemetryEnabled={telemetryEnabled}
-								onTelemetryToggle={onTelemetryToggle}
-								fontScale={fontScale}
-								onFontScaleChange={onFontScaleChange}
-							/>
-						</div>
-					</motion.div>
+				{/* ── Content — rounded floating glass panel; sections slide in
+				     like a game-menu/dashboard (desktop + mobile) ── */}
+				<main className="flex-1 min-w-0 panel-raised overflow-hidden flex flex-col">
+					<div className="flex-1 overflow-y-auto flex flex-col min-h-0">
+						<motion.div
+							key={activeSection}
+							className="flex-1 flex flex-col min-h-0"
+							initial={reduced ? { opacity: 0 } : { opacity: 0, x: xOffset, scale: 0.985 }}
+							animate={{ opacity: 1, x: 0, scale: 1 }}
+							transition={{ duration: 0.26, ease: easeOutExpo }}
+						>
+							<div className="px-6 md:px-8 py-6 md:py-7 flex-1 flex flex-col min-h-0">
+								<SectionContent
+									activeSection={activeSection}
+									onShowKeyEntry={onShowKeyEntry}
+									telemetryEnabled={telemetryEnabled}
+									onTelemetryToggle={onTelemetryToggle}
+									fontScale={fontScale}
+									onFontScaleChange={onFontScaleChange}
+								/>
+							</div>
+						</motion.div>
+					</div>
 				</main>
 			</div>
 

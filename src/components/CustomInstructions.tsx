@@ -78,12 +78,11 @@ export function CustomInstructions() {
 	};
 
 	return (
-		<div>
-			<div data-color-mode={colorMode} className="glass overflow-hidden">
+		<div className="flex flex-col flex-1 min-h-0">
+			<div data-color-mode={colorMode} className="glass overflow-hidden cwk-md-fill flex-1 min-h-0">
 				<MDEditor
 					value={instructions}
 					onChange={handleChange}
-					height={240}
 					preview="edit"
 					visibleDragbar={false}
 					textareaProps={{
@@ -94,20 +93,20 @@ export function CustomInstructions() {
 					}}
 				/>
 			</div>
-			<div className="flex items-center gap-2 mt-2">
+			<div className="flex items-center justify-end gap-3 mt-4 shrink-0">
+				{saved && (
+					<span className="text-xs text-primary font-medium transition-opacity">
+						Saved! Applied to this and new chats.
+					</span>
+				)}
 				<button
 					type="button"
 					onClick={handleSave}
 					disabled={loading || saving}
-					className="px-2.5 py-1 text-[10px] font-medium bg-primary text-primary-foreground rounded hover:bg-primary/80 disabled:opacity-50 transition-colors"
+					className="px-6 py-2.5 text-sm font-semibold rounded-xl bg-primary text-primary-foreground shadow-sm hover:brightness-110 active:scale-[0.98] disabled:opacity-50 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-transparent"
 				>
 					{saving ? "Saving…" : "Save"}
 				</button>
-				{saved && (
-					<span className="text-[10px] text-primary font-medium transition-opacity">
-						Saved! Applied to this and new chats.
-					</span>
-				)}
 			</div>
 		</div>
 	);

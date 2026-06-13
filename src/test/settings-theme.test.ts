@@ -28,9 +28,15 @@ describe("settings chrome", () => {
 		expect(settingsPage).not.toContain("h-full bg-background");
 	});
 
-	it("desktop nav rail uses the glass rail surface, not a bare border divider", () => {
-		expect(settingsPage).toContain("settings-rail");
+	it("desktop layout mirrors home: floating panel-sidebar rail + panel-raised content", () => {
+		expect(settingsPage).toContain("panel-sidebar");
+		expect(settingsPage).toContain("panel-raised");
 		expect(settingsPage).not.toContain('borderRight: "1px solid hsl(var(--border))"');
+	});
+
+	it("sections animate in like a dashboard (keyed scale/slide transition)", () => {
+		expect(settingsPage).toContain("key={activeSection}");
+		expect(settingsPage).toContain("scale: 0.985");
 	});
 
 	it("mobile chrome (top bar + tab strip) drops the bare 1px divider", () => {

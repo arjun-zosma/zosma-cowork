@@ -237,9 +237,12 @@ zosma-cowork/
 │   └── src/
 │       ├── main.rs               # Entry point
 │       └── lib.rs                # IPC commands → sidecar process
-├── docs/                         # Architecture & plans
+├── docs/                         # Architecture, plans & DESIGN.md (design system)
 └── .github/workflows/            # CI/CD
 ```
+
+> **Building UI?** Follow the [Design Guidelines](docs/DESIGN.md) — the global
+> standard for Zosma's elevated blue-glass design system.
 
 ---
 

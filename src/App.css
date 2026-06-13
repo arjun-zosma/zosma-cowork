@@ -582,6 +582,31 @@ body[data-wallpaper]::before {
 		hsl(var(--elev-shadow) / 0.3);
 }
 
+/* ── Custom Instructions: full-page glass markdown editor (#278) ──
+   Make the @uiw/react-md-editor fill the glass card and grow with the
+   viewport so editing instructions feels like a focused, full-page surface
+   rather than a cramped 240px box. The editor's own chrome is made
+   transparent so the brand glass shows through. */
+.cwk-md-fill .w-md-editor {
+	height: clamp(320px, calc(100dvh - 360px), 920px) !important;
+	background: transparent;
+	box-shadow: none;
+	border: none;
+	color: hsl(var(--foreground));
+}
+.cwk-md-fill .w-md-editor-toolbar {
+	background: transparent;
+	border-bottom: 1px solid hsl(var(--elev-border) / 0.5);
+	border-radius: 0;
+}
+.cwk-md-fill .w-md-editor-content,
+.cwk-md-fill .w-md-editor-text,
+.cwk-md-fill .w-md-editor-input,
+.cwk-md-fill .w-md-editor-text-pre,
+.cwk-md-fill .w-md-editor-text-input {
+	background: transparent !important;
+}
+
 /* ── Settings nav rail (#278) ──
    Glass rail variant for the Settings nav + mobile chrome so they match the
    home sidebar: translucent blurred surface, faint brand wash, inset edge
