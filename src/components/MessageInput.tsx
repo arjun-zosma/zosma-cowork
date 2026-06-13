@@ -2,7 +2,7 @@ import { usePasteDetection } from "@/hooks/usePasteDetection";
 import { trackEvent } from "@/lib/telemetry";
 import type { ModelInfo } from "@/types";
 import type { Command } from "@/types/commands";
-import { ArrowUp, Mic, Paperclip, X } from "lucide-react";
+import { ArrowUp, Mic, Paperclip, Square, X } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 import {
 	forwardRef,
@@ -54,6 +54,12 @@ interface MessageInputProps {
 	 * matching pi-coding-agent's TUI shortcuts. See issue #201.
 	 */
 	streaming?: boolean;
+	/**
+	 * Abort the in-flight agent run. While `streaming`, the composer's primary
+	 * CTA becomes a Stop button wired to this (the old standalone StatusBar's
+	 * Stop moved here). Steering still happens via Enter (see placeholder).
+	 */
+	onAbort?: () => void;
 	/** Queue a steering message on the running session (issue #201, PR 1). */
 	onSteer?: (message: string) => void;
 	/** Queue a follow-up message on the running session (issue #201, PR 1). */
@@ -92,6 +98,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(
 			commands,
 			onRunCommand,
 			streaming = false,
+			onAbort,
 			onSteer,
 			onFollowUp,
 			queue,
@@ -514,20 +521,35 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(
 							)}
 						</div>
 
-						{/* Right: send CTA — white bg, black icon always */}
-						<button
-							type="submit"
-							disabled={disabled || !hasContent}
-							aria-label={streaming ? "Send steering message" : "Send message"}
-							className="flex items-center justify-center w-8 h-8 rounded-full transition-all duration-150 disabled:cursor-not-allowed"
-							style={{
-								background: hasContent ? "#ffffff" : "hsl(var(--muted))",
-								color: hasContent ? "#000000" : "hsl(var(--muted-foreground) / 0.4)",
-								opacity: disabled ? 0.4 : 1,
-							}}
-						>
-							<ArrowUp size={15} strokeWidth={2.5} />
-						</button>
+						{/* Right CTA. While streaming with an empty composer it's a Stop
+						    button (replaces the old StatusBar's Stop); once the user types
+						    a steering message it becomes Send (Enter also steers). Idle =
+						    Send. */}
+						{streaming && !hasContent && onAbort ? (
+							<button
+								type="button"
+								onClick={onAbort}
+								aria-label="Stop generating"
+								className="flex items-center justify-center w-8 h-8 rounded-full transition-all duration-150 text-destructive hover:bg-destructive/15"
+								style={{ background: "hsl(var(--destructive) / 0.12)" }}
+							>
+								<Square size={13} strokeWidth={2.5} className="fill-current" />
+							</button>
+						) : (
+							<button
+								type="submit"
+								disabled={disabled || !hasContent}
+								aria-label={streaming ? "Send steering message" : "Send message"}
+								className="flex items-center justify-center w-8 h-8 rounded-full transition-all duration-150 disabled:cursor-not-allowed"
+								style={{
+									background: hasContent ? "#ffffff" : "hsl(var(--muted))",
+									color: hasContent ? "#000000" : "hsl(var(--muted-foreground) / 0.4)",
+									opacity: disabled ? 0.4 : 1,
+								}}
+							>
+								<ArrowUp size={15} strokeWidth={2.5} />
+							</button>
+						)}
 					</div>
 				</div>
 			</motion.form>

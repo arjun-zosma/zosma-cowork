@@ -1040,6 +1040,31 @@ body[data-wallpaper]::before {
 .status-line::-webkit-scrollbar {
 	display: none;
 }
+.status-activity {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.4rem;
+	padding: 0.1rem 0.45rem;
+	border-radius: var(--radius-md);
+	white-space: nowrap;
+	flex-shrink: 0;
+	color: hsl(var(--status-active-fg));
+}
+.status-activity-spinner {
+	width: 0.85rem;
+	height: 0.85rem;
+	flex-shrink: 0;
+	color: hsl(var(--status-active-fg));
+}
+.status-activity-label {
+	font-weight: 600;
+	color: hsl(var(--status-active-fg));
+}
+.status-activity-elapsed {
+	font-variant-numeric: tabular-nums;
+	font-size: 10px;
+	color: hsl(var(--muted-foreground) / 0.7);
+}
 .status-metric {
 	display: inline-flex;
 	align-items: center;

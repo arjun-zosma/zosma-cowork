@@ -1,7 +1,6 @@
 import { ChatMessageItem } from "@/components/ChatMessage";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { MessageInput } from "@/components/MessageInput";
-import { StatusBar } from "@/components/StatusBar";
 import { StatusLine } from "@/components/StatusLine";
 import { SuggestedActions } from "@/components/SuggestedActions";
 import type { ToolPhase } from "@/hooks/usePiStream";
@@ -200,23 +199,20 @@ export function ChatView({
 
 			{error && <ErrorBanner error={error} onRetry={onRetry} onSwitchModel={onRetry} />}
 
-			<StatusBar
-				isRunning={isRunning}
-				status={status}
-				streamingMessage={streamingMessage}
-				toolPhase={toolPhase}
-				onAbort={onAbort}
-			/>
-
-			{/* #268 — always-on telemetry footer. Persists across turns (unlike
-			    the transient StatusBar above, which only shows live activity +
-			    Stop while streaming) so token/cost/context numbers stay legible. */}
+			{/* #268 — single always-on footer. Hosts the live activity indicator
+			    (spinner + phase + elapsed) while streaming AND the persistent
+			    token/cost/context telemetry across turns. Stop lives in the
+			    composer below; the old standalone StatusBar was removed. */}
 			{thinking && (
 				<StatusLine
 					stats={sessionStats ?? null}
 					thinking={thinking}
 					modelName={findModel(models, currentModelId)?.name}
 					onCycleThinking={onCycleThinking}
+					isRunning={isRunning}
+					status={status}
+					streamingMessage={streamingMessage}
+					toolPhase={toolPhase}
 				/>
 			)}
 
@@ -231,6 +227,8 @@ export function ChatView({
 					   a fresh prompt. `disabled` is reserved for hard-blocks like
 					   "no model selected" or "sidecar not ready". */
 					streaming={isRunning}
+					/* Stop now lives in the composer (replaces the old StatusBar). */
+					onAbort={onAbort}
 					onSteer={onSteer}
 					onFollowUp={onFollowUp}
 					queue={queue}

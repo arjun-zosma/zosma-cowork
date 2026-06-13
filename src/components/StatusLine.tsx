@@ -1,18 +1,20 @@
 /**
- * StatusLine — always-on footer telemetry (issue #268).
+ * StatusLine — always-on footer telemetry + live activity (issue #268).
  *
  * Mirrors the pi coding-agent TUI footer in a compact, glassy strip that sits
  * just above the composer:
  *
- *   context %/window · cost · cache-hit % · r/w cache · model · thinking level
+ *   [● Thinking · 5s] · context %/window · ↑in ↓out · cost · cache-hit % · r/w · model · thinking level
  *
- * Unlike {@link StatusBar} (a transient streaming-only "Thinking/Working"
- * indicator), this persists across turns so the numbers are always legible.
- * Each metric carries a tooltip explaining what it means, and the thinking
- * level renders as a pill that's clickable to cycle the reasoning effort.
+ * While the agent is responding it ALSO hosts the transient "Thinking/Working"
+ * indicator (spinner + friendly phase label + elapsed timer) on the left — this
+ * replaces the old standalone StatusBar so there's a single footer. The Stop
+ * action now lives inside the composer. Each metric carries a tooltip, and the
+ * thinking level renders as a pill that's clickable to cycle reasoning effort.
  */
 
 import { Tooltip } from "@/components/ui/tooltip";
+import type { ToolPhase } from "@/hooks/usePiStream";
 import {
 	type SessionStats,
 	type ThinkingState,
@@ -23,7 +25,21 @@ import {
 	formatTokens,
 	thinkingLabel,
 } from "@/lib/sessionStats";
-import { BrainCircuit, Coins, Database, Gauge, Layers } from "lucide-react";
+import { friendlyToolPhrase } from "@/lib/statusLabels";
+import type { ChatMessage } from "@/types";
+import {
+	ArrowDown,
+	ArrowUp,
+	BrainCircuit,
+	Coins,
+	Database,
+	Gauge,
+	Layers,
+	Loader2,
+} from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+
+type StreamStateStatus = "idle" | "thinking" | "tool_call" | "responding" | "error";
 
 interface StatusLineProps {
 	stats: SessionStats | null;
@@ -32,6 +48,14 @@ interface StatusLineProps {
 	modelName?: string;
 	/** Cycle the reasoning effort (off → … → xhigh → off). */
 	onCycleThinking?: () => void;
+	/** True while the agent is actively responding (drives the live indicator). */
+	isRunning?: boolean;
+	/** Coarse stream phase used to pick the friendly activity label. */
+	status?: StreamStateStatus;
+	/** In-flight assistant message (for tool-progress dots). */
+	streamingMessage?: ChatMessage | null;
+	/** Fine-grained tool phase for a more specific activity label. */
+	toolPhase?: ToolPhase | null;
 }
 
 /** Compact `200k`-style window label. */
@@ -40,9 +64,74 @@ function windowLabel(n: number): string {
 	return `${n}`;
 }
 
-export function StatusLine({ stats, thinking, modelName, onCycleThinking }: StatusLineProps) {
+function formatElapsed(seconds: number): string {
+	if (seconds < 60) return `${seconds}s`;
+	const m = Math.floor(seconds / 60);
+	const s = seconds % 60;
+	return `${m}m ${s.toString().padStart(2, "0")}s`;
+}
+
+/** Friendly, non-technical activity label (issue #173) — no raw commands/paths. */
+function activityLabel(
+	status: StreamStateStatus | undefined,
+	toolPhase: ToolPhase | null | undefined,
+	toolCalls: ChatMessage["toolCalls"],
+): string {
+	if (status === "thinking") return "Thinking";
+	if (status === "responding") return "Writing a response";
+	if (status === "error") return "Something went wrong";
+	if (status === "tool_call") {
+		if (toolPhase) {
+			switch (toolPhase.type) {
+				case "calling":
+				case "executing":
+					return friendlyToolPhrase(toolPhase.toolName);
+				case "done":
+					return "Working";
+				case "error":
+					return "Something went wrong";
+			}
+		}
+		const running = (toolCalls || []).find((tc) => tc.status === "running");
+		return running ? friendlyToolPhrase(running.name) : "Working";
+	}
+	return status ?? "Working";
+}
+
+export function StatusLine({
+	stats,
+	thinking,
+	modelName,
+	onCycleThinking,
+	isRunning,
+	status,
+	streamingMessage,
+	toolPhase,
+}: StatusLineProps) {
 	const tokens = stats?.tokens;
 	const ctx = stats?.contextUsage;
+
+	// Elapsed-time counter for the live activity indicator — resets per run.
+	const [elapsed, setElapsed] = useState(0);
+	const startTimeRef = useRef<number | null>(null);
+	useEffect(() => {
+		if (!isRunning) {
+			setElapsed(0);
+			startTimeRef.current = null;
+			return;
+		}
+		if (startTimeRef.current === null) startTimeRef.current = Date.now();
+		const tick = () => {
+			if (startTimeRef.current !== null) {
+				setElapsed(Math.floor((Date.now() - startTimeRef.current) / 1000));
+			}
+		};
+		tick();
+		const id = setInterval(tick, 1000);
+		return () => clearInterval(id);
+	}, [isRunning]);
+
+	const toolCalls = streamingMessage?.toolCalls || [];
 
 	// Cache-hit rate: prefer the live totals; null when there's no input yet.
 	const hit = tokens ? cacheHitRate(tokens.input, tokens.cacheRead) : null;
@@ -61,6 +150,42 @@ export function StatusLine({ stats, thinking, modelName, onCycleThinking }: Stat
 			style={{ maxWidth: "var(--chat-composer-max-width, 852px)" }}
 			aria-label="Session telemetry"
 		>
+			{/* Live activity indicator (replaces the old StatusBar). Only while the
+			    agent is responding: spinner + friendly phase label + tool-progress
+			    dots + elapsed timer. The Stop action lives in the composer. */}
+			{isRunning && (
+				<>
+					<div className="status-activity" aria-label="Agent activity">
+						<Loader2 className="status-activity-spinner animate-spin" />
+						<span className="status-activity-label">
+							{activityLabel(status, toolPhase, toolCalls)}
+						</span>
+						{toolCalls.length > 0 && (
+							<span className="flex items-center gap-1 shrink-0">
+								{toolCalls.map((tc) => (
+									<span
+										key={tc.id}
+										className="inline-block w-1.5 h-1.5 rounded-full"
+										style={{
+											background:
+												tc.status === "running"
+													? "hsl(var(--tool-running-fg))"
+													: tc.status === "error"
+														? "hsl(var(--tool-error-fg))"
+														: "hsl(var(--tool-complete-fg))",
+											animation:
+												tc.status === "running" ? "pulse-dot 1.5s ease-in-out infinite" : undefined,
+										}}
+									/>
+								))}
+							</span>
+						)}
+						<span className="status-activity-elapsed">{formatElapsed(elapsed)}</span>
+					</div>
+					<Sep />
+				</>
+			)}
+
 			{/* Context window usage */}
 			<Tooltip
 				side="top"
@@ -74,6 +199,21 @@ export function StatusLine({ stats, thinking, modelName, onCycleThinking }: Stat
 					<Gauge className="status-metric-icon" />
 					<span className="status-metric-value">{ctxPercent}</span>
 					{ctxWindow && <span className="status-metric-unit">/{ctxWindow}</span>}
+				</div>
+			</Tooltip>
+
+			<Sep />
+
+			{/* Input / output tokens (↑ sent · ↓ generated) — matches pi's footer. */}
+			<Tooltip
+				side="top"
+				content="Tokens this session — ↑ input (prompt tokens sent) · ↓ output (tokens generated by the model)."
+			>
+				<div className="status-metric">
+					<ArrowUp className="status-metric-icon" />
+					<span className="status-metric-value">{tokens ? formatTokens(tokens.input) : "0"}</span>
+					<ArrowDown className="status-metric-icon" />
+					<span className="status-metric-value">{tokens ? formatTokens(tokens.output) : "0"}</span>
 				</div>
 			</Tooltip>
 
@@ -128,27 +268,33 @@ export function StatusLine({ stats, thinking, modelName, onCycleThinking }: Stat
 				</Tooltip>
 			)}
 
-			{/* Thinking level pill — clickable to cycle reasoning effort */}
-			<Tooltip
-				side="top"
-				content={
-					reasoningDisabled
-						? "This model doesn't expose adjustable reasoning."
-						: `Reasoning effort: ${thinkingLabel(pillLevel)}. Click to cycle (off · minimal · low · medium · high · xhigh).`
-				}
-			>
-				<button
-					type="button"
-					onClick={reasoningDisabled ? undefined : onCycleThinking}
-					disabled={reasoningDisabled}
-					aria-label={`Reasoning effort: ${thinkingLabel(pillLevel)}${reasoningDisabled ? "" : ". Click to cycle."}`}
-					className="status-thinking-pill"
-					data-level={pillLevel}
+			{/* Thinking level pill — clickable to cycle reasoning effort. Hidden
+			    until the sidecar confirms the model's real capability (known), so
+			    we never flash a fabricated "Medium" for a non-reasoning model. */}
+			{thinking.known !== false && (
+				<Tooltip
+					side="top"
+					content={
+						reasoningDisabled
+							? "This model doesn't expose adjustable reasoning."
+							: `Reasoning effort: ${thinkingLabel(pillLevel)}. Click to cycle (off · minimal · low · medium · high · xhigh).`
+					}
 				>
-					<BrainCircuit className="w-3 h-3 shrink-0" />
-					<span className="truncate">{thinkingLabel(pillLevel)}</span>
-				</button>
-			</Tooltip>
+					<button
+						type="button"
+						onClick={reasoningDisabled ? undefined : onCycleThinking}
+						disabled={reasoningDisabled}
+						aria-label={`Reasoning effort: ${thinkingLabel(pillLevel)}${reasoningDisabled ? "" : ". Click to cycle."}`}
+						className="status-thinking-pill"
+						data-level={pillLevel}
+					>
+						<BrainCircuit className="w-3 h-3 shrink-0" />
+						<span className="truncate">
+							{!thinking.supported ? "No reasoning" : thinkingLabel(pillLevel)}
+						</span>
+					</button>
+				</Tooltip>
+			)}
 		</div>
 	);
 }

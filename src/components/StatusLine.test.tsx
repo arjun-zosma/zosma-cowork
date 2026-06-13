@@ -58,6 +58,29 @@ describe("StatusLine", () => {
 		expect(onCycle).not.toHaveBeenCalled();
 	});
 
+	it("hides the pill until the engine confirms reasoning capability (known=false)", () => {
+		render(
+			<StatusLine stats={stats()} thinking={{ ...baseThinking, level: "medium", known: false }} />,
+		);
+		// No fabricated "Medium" pill should appear before the sidecar reports.
+		expect(screen.queryByRole("button", { name: /Reasoning effort/ })).toBeNull();
+	});
+
+	it("shows 'No reasoning' for a model that can't reason", () => {
+		render(
+			<StatusLine
+				stats={stats()}
+				thinking={{ level: "off", available: ["off"], supported: false, known: true }}
+			/>,
+		);
+		expect(screen.getByText("No reasoning")).toBeDefined();
+	});
+
+	it("renders the live activity indicator while running", () => {
+		render(<StatusLine stats={stats()} thinking={baseThinking} isRunning status="thinking" />);
+		expect(screen.getByText("Thinking")).toBeDefined();
+	});
+
 	it("shows em dashes for context % right after compaction (null usage)", () => {
 		render(
 			<StatusLine

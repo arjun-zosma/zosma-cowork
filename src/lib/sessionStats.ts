@@ -77,6 +77,14 @@ export interface ThinkingState {
 	level: ThinkingLevel;
 	available: ThinkingLevel[];
 	supported: boolean;
+	/**
+	 * Whether the sidecar has reported the real reasoning capability yet.
+	 * `false` on first paint (before the engine answers) so the UI can avoid
+	 * showing a fabricated default level (e.g. "Medium") for a model that may
+	 * not support reasoning at all. Undefined is treated as known (test
+	 * fixtures / remote mode).
+	 */
+	known?: boolean;
 }
 
 /**

@@ -1,8 +1,8 @@
 import {
 	type SessionStats,
+	THINKING_LEVELS,
 	type ThinkingLevel,
 	type ThinkingState,
-	THINKING_LEVELS,
 } from "@/lib/sessionStats";
 import type { ChatMessage, ToolCallInfo } from "@/types";
 import type {
@@ -22,7 +22,28 @@ const INITIAL_THINKING: ThinkingState = {
 	level: "medium",
 	available: [...THINKING_LEVELS],
 	supported: true,
+	// Not yet confirmed by the engine — the status-line pill stays hidden until
+	// the sidecar reports the model's real reasoning capability, so we never
+	// flash a misleading "Medium" for a model that can't reason.
+	known: false,
 };
+
+/** Build a confirmed ThinkingState from a sidecar reasoning response. */
+function toThinkingState(res: {
+	thinkingLevel?: ThinkingLevel;
+	availableThinkingLevels?: ThinkingLevel[];
+	supportsThinking?: boolean;
+}): ThinkingState {
+	return {
+		level: res.thinkingLevel as ThinkingLevel,
+		available:
+			res.availableThinkingLevels && res.availableThinkingLevels.length > 0
+				? res.availableThinkingLevels
+				: [...THINKING_LEVELS],
+		supported: res.supportsThinking ?? true,
+		known: true,
+	};
+}
 
 /**
  * Snapshot of the agent session's pending message queue (#201 PR 3).
@@ -371,11 +392,11 @@ export function streamReducer(state: StreamState, action: StreamAction): StreamS
 						? {
 								...state.queue,
 								steering: [...state.queue.steering, action.text],
-						  }
+							}
 						: {
 								...state.queue,
 								followUp: [...state.queue.followUp, action.text],
-						  },
+							},
 			};
 		}
 
@@ -420,14 +441,7 @@ export function usePiStream() {
 			const stats = (await invoke("get_session_stats")) as SessionStats;
 			setSessionStats(stats);
 			if (stats.thinkingLevel) {
-				setThinking({
-					level: stats.thinkingLevel,
-					available:
-						stats.availableThinkingLevels && stats.availableThinkingLevels.length > 0
-							? stats.availableThinkingLevels
-							: [...THINKING_LEVELS],
-					supported: stats.supportsThinking ?? true,
-				});
+				setThinking(toThinkingState(stats));
 			}
 		} catch (err) {
 			console.warn("[cowork] get_session_stats failed:", err);
@@ -450,14 +464,7 @@ export function usePiStream() {
 				supportsThinking?: boolean;
 			};
 			if (res?.thinkingLevel) {
-				setThinking({
-					level: res.thinkingLevel,
-					available:
-						res.availableThinkingLevels && res.availableThinkingLevels.length > 0
-							? res.availableThinkingLevels
-							: [...THINKING_LEVELS],
-					supported: res.supportsThinking ?? true,
-				});
+				setThinking(toThinkingState(res));
 			}
 		} catch (err) {
 			console.warn("[cowork] set_thinking_level failed:", err);
@@ -474,176 +481,176 @@ export function usePiStream() {
 				supportsThinking?: boolean;
 			};
 			if (res?.thinkingLevel) {
-				setThinking({
-					level: res.thinkingLevel,
-					available:
-						res.availableThinkingLevels && res.availableThinkingLevels.length > 0
-							? res.availableThinkingLevels
-							: [...THINKING_LEVELS],
-					supported: res.supportsThinking ?? true,
-				});
+				setThinking(toThinkingState(res));
 			}
 		} catch (err) {
 			console.warn("[cowork] cycle_thinking_level failed:", err);
 		}
 	}, []);
 
-	const startStream = useCallback(async (text: string) => {
-		dispatch({ type: "START_STREAM", prompt: text });
+	const startStream = useCallback(
+		async (text: string) => {
+			dispatch({ type: "START_STREAM", prompt: text });
 
-		const channel = new Channel<PiEvent>();
+			const channel = new Channel<PiEvent>();
 
-		channel.onmessage = (event: PiEvent) => {
-			try {
-				switch (event.type) {
-					case "message_update": {
-						const msgEvent = event as PiMessageUpdateEvent;
-						const ame = msgEvent.assistantMessageEvent;
+			channel.onmessage = (event: PiEvent) => {
+				try {
+					switch (event.type) {
+						case "message_update": {
+							const msgEvent = event as PiMessageUpdateEvent;
+							const ame = msgEvent.assistantMessageEvent;
 
-						if (msgEvent.message?.model || msgEvent.message?.provider) {
-							dispatch({
-								type: "MODEL_INFO",
-								model: msgEvent.message.model || "",
-								provider: msgEvent.message.provider || "",
-							});
-						}
-
-						switch (ame.type) {
-							case "thinking_delta":
-								dispatch({ type: "THINKING_DELTA", delta: ame.delta });
-								break;
-							case "text_delta":
-								dispatch({ type: "TEXT_DELTA", delta: ame.delta });
-								break;
-							case "toolcall_end": {
-								const tc = ame.toolCall;
+							if (msgEvent.message?.model || msgEvent.message?.provider) {
 								dispatch({
-									type: "TOOL_CALL_START",
-									toolCall: extractToolCallInfo(tc),
+									type: "MODEL_INFO",
+									model: msgEvent.message.model || "",
+									provider: msgEvent.message.provider || "",
 								});
-								break;
 							}
-							case "error":
-								dispatch({
-									type: "STREAM_ERROR",
-									error: ame.reason === "aborted" ? "Aborted" : "Error",
-								});
-								break;
+
+							switch (ame.type) {
+								case "thinking_delta":
+									dispatch({ type: "THINKING_DELTA", delta: ame.delta });
+									break;
+								case "text_delta":
+									dispatch({ type: "TEXT_DELTA", delta: ame.delta });
+									break;
+								case "toolcall_end": {
+									const tc = ame.toolCall;
+									dispatch({
+										type: "TOOL_CALL_START",
+										toolCall: extractToolCallInfo(tc),
+									});
+									break;
+								}
+								case "error":
+									dispatch({
+										type: "STREAM_ERROR",
+										error: ame.reason === "aborted" ? "Aborted" : "Error",
+									});
+									break;
+							}
+							break;
 						}
-						break;
-					}
 
-					case "message_start": {
-						if (event.message?.role === "assistant") {
-							dispatch({ type: "TURN_RESET" });
+						case "message_start": {
+							if (event.message?.role === "assistant") {
+								dispatch({ type: "TURN_RESET" });
+							}
+							break;
 						}
-						break;
-					}
 
-					case "tool_execution_start": {
-						const te = event as PiToolExecutionStartEvent;
-						setToolPhase({
-							type: "calling",
-							toolName: te.toolName,
-							args: te.args as Record<string, unknown>,
-						});
-						break;
-					}
+						case "tool_execution_start": {
+							const te = event as PiToolExecutionStartEvent;
+							setToolPhase({
+								type: "calling",
+								toolName: te.toolName,
+								args: te.args as Record<string, unknown>,
+							});
+							break;
+						}
 
-					case "tool_execution_update": {
-						const te = event as PiToolExecutionUpdateEvent;
-						const partialText = (te.partialResult?.content || []).map((c) => c.text).join("");
-						dispatch({
-							type: "TOOL_CALL_UPDATE",
-							id: te.toolCallId,
-							result: partialText,
-							status: "running",
-						});
-						dispatch({
-							type: "TOOL_PARTIAL_OUTPUT",
-							id: te.toolCallId,
-							partialOutput: partialText,
-						});
-						setToolPhase({
-							type: "executing",
-							toolName: te.toolName,
-							partialOutput: partialText,
-						});
-						break;
-					}
+						case "tool_execution_update": {
+							const te = event as PiToolExecutionUpdateEvent;
+							const partialText = (te.partialResult?.content || []).map((c) => c.text).join("");
+							dispatch({
+								type: "TOOL_CALL_UPDATE",
+								id: te.toolCallId,
+								result: partialText,
+								status: "running",
+							});
+							dispatch({
+								type: "TOOL_PARTIAL_OUTPUT",
+								id: te.toolCallId,
+								partialOutput: partialText,
+							});
+							setToolPhase({
+								type: "executing",
+								toolName: te.toolName,
+								partialOutput: partialText,
+							});
+							break;
+						}
 
-					case "tool_execution_end": {
-						const te = event as PiToolExecutionEndEvent;
-						dispatch({
-							type: "TOOL_CALL_UPDATE",
-							id: te.toolCallId,
-							result: (te.result?.content || []).map((c) => c.text).join(""),
-							status: te.isError ? "error" : "completed",
-							isError: te.isError,
-							details: te.result?.details as Record<string, unknown> | undefined,
-						});
-						setToolPhase(
-							te.isError
-								? { type: "error", toolName: te.toolName, message: "Tool failed" }
-								: { type: "done", toolName: te.toolName },
-						);
-						break;
-					}
+						case "tool_execution_end": {
+							const te = event as PiToolExecutionEndEvent;
+							dispatch({
+								type: "TOOL_CALL_UPDATE",
+								id: te.toolCallId,
+								result: (te.result?.content || []).map((c) => c.text).join(""),
+								status: te.isError ? "error" : "completed",
+								isError: te.isError,
+								details: te.result?.details as Record<string, unknown> | undefined,
+							});
+							setToolPhase(
+								te.isError
+									? { type: "error", toolName: te.toolName, message: "Tool failed" }
+									: { type: "done", toolName: te.toolName },
+							);
+							break;
+						}
 
-					case "message_end": {
-						dispatch({ type: "MESSAGE_END" });
-						break;
-					}
+						case "message_end": {
+							dispatch({ type: "MESSAGE_END" });
+							// #268 — each assistant message carries finalized usage; refresh
+							// so token/cost/context update per sub-message within a run, not
+							// only at the very end (agent_end). Feels closer to realtime.
+							void refreshStats();
+							break;
+						}
 
-					case "agent_end":
-					case "done":
-						dispatch({ type: "STREAM_COMPLETE" });
-						// #268 — a turn just finished: pull fresh token/cost/context
-						// totals so the status line updates as turns complete.
-						void refreshStats();
-						break;
+						case "agent_end":
+						case "done":
+							dispatch({ type: "STREAM_COMPLETE" });
+							// #268 — a turn just finished: pull fresh token/cost/context
+							// totals so the status line updates as turns complete.
+							void refreshStats();
+							break;
 
-					case "error": {
-						const errEvent = event as PiErrorEvent;
-						dispatch({
-							type: "STREAM_ERROR",
-							error: errEvent.message || "Unknown error",
-						});
-						break;
-					}
+						case "error": {
+							const errEvent = event as PiErrorEvent;
+							dispatch({
+								type: "STREAM_ERROR",
+								error: errEvent.message || "Unknown error",
+							});
+							break;
+						}
 
-					// Pi SDK session-level queue snapshot (#201 PR 3). Arrives
-					// on every steer/follow-up enqueue, dequeue, and clear.
-					// The Rust layer also emits this globally (see
-					// `listen("queue_update")` below) so the queue stays in
-					// sync even when no prompt channel is active.
-					case "queue_update": {
-						const qe = event as unknown as {
-							steering?: string[];
-							followUp?: string[];
-						};
-						dispatch({
-							type: "QUEUE_UPDATE",
-							steering: qe.steering ?? [],
-							followUp: qe.followUp ?? [],
-						});
-						break;
+						// Pi SDK session-level queue snapshot (#201 PR 3). Arrives
+						// on every steer/follow-up enqueue, dequeue, and clear.
+						// The Rust layer also emits this globally (see
+						// `listen("queue_update")` below) so the queue stays in
+						// sync even when no prompt channel is active.
+						case "queue_update": {
+							const qe = event as unknown as {
+								steering?: string[];
+								followUp?: string[];
+							};
+							dispatch({
+								type: "QUEUE_UPDATE",
+								steering: qe.steering ?? [],
+								followUp: qe.followUp ?? [],
+							});
+							break;
+						}
 					}
+				} catch (err) {
+					console.error("[cowork] Error processing event:", err, event);
 				}
-			} catch (err) {
-				console.error("[cowork] Error processing event:", err, event);
-			}
-		};
+			};
 
-		try {
-			await invoke("send_prompt", { text, ch: channel });
-		} catch (err) {
-			dispatch({
-				type: "STREAM_ERROR",
-				error: err instanceof Error ? err.message : String(err),
-			});
-		}
-	}, [refreshStats]);
+			try {
+				await invoke("send_prompt", { text, ch: channel });
+			} catch (err) {
+				dispatch({
+					type: "STREAM_ERROR",
+					error: err instanceof Error ? err.message : String(err),
+				});
+			}
+		},
+		[refreshStats],
+	);
 
 	const abortStream = useCallback(async () => {
 		dispatch({ type: "ABORT_STREAM" });
@@ -735,14 +742,7 @@ export function usePiStream() {
 					supportsThinking?: boolean;
 				};
 				if (mounted && res?.thinkingLevel) {
-					setThinking({
-						level: res.thinkingLevel,
-						available:
-							res.availableThinkingLevels && res.availableThinkingLevels.length > 0
-								? res.availableThinkingLevels
-								: [...THINKING_LEVELS],
-						supported: res.supportsThinking ?? true,
-					});
+					setThinking(toThinkingState(res));
 				}
 			} catch {
 				// sidecar not ready yet — the `ready` listener below retries.
@@ -764,17 +764,14 @@ export function usePiStream() {
 
 	useEffect(() => {
 		let unlisten: (() => void) | undefined;
-		listen<{ steering?: string[]; followUp?: string[] }>(
-			"queue_update",
-			(evt) => {
-				const payload = evt.payload ?? {};
-				dispatch({
-					type: "QUEUE_UPDATE",
-					steering: payload.steering ?? [],
-					followUp: payload.followUp ?? [],
-				});
-			},
-		).then((fn) => {
+		listen<{ steering?: string[]; followUp?: string[] }>("queue_update", (evt) => {
+			const payload = evt.payload ?? {};
+			dispatch({
+				type: "QUEUE_UPDATE",
+				steering: payload.steering ?? [],
+				followUp: payload.followUp ?? [],
+			});
+		}).then((fn) => {
 			unlisten = fn;
 		});
 		return () => {
