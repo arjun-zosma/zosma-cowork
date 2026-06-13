@@ -405,7 +405,7 @@ function SessionRow({
 	return (
 		<motion.div
 			layout
-			className="relative rounded-lg overflow-hidden"
+			className="relative rounded-lg overflow-hidden transition-colors"
 			initial={reduced ? false : { opacity: 0, x: -8 }}
 			animate={{ opacity: 1, x: 0 }}
 			transition={{
@@ -415,6 +415,15 @@ function SessionRow({
 			}}
 			onHoverStart={() => setHovered(true)}
 			onHoverEnd={() => setHovered(false)}
+			// Single background lives on the container so the content row and the
+			// action row read as ONE surface (no double-tint seam on hover).
+			style={{
+				background: isActive
+					? "hsl(var(--sidebar-accent))"
+					: hovered
+						? "hsl(var(--accent) / 0.5)"
+						: undefined,
+			}}
 		>
 			{/* Active accent bar */}
 			<AnimatePresence>
@@ -490,12 +499,9 @@ function SessionRow({
 						type="button"
 						onClick={() => onSelect(session.id)}
 						onDoubleClick={() => onRename && startRename()}
-						className={`w-full text-left pl-4 pr-3 pt-2.5 pb-2 rounded-t-lg transition-colors ${
+						className={`w-full text-left pl-4 pr-3 pt-2.5 pb-2 rounded-t-lg ${
 							isActive ? "bg-sidebar-accent" : ""
 						}`}
-						style={{
-							background: !isActive && hovered ? "hsl(var(--accent) / 0.5)" : undefined,
-						}}
 						whileTap={reduced ? {} : { scale: 0.985 }}
 						transition={{ duration: 0.12, ease: [0.16, 1, 0.3, 1] }}
 					>
@@ -548,19 +554,14 @@ function SessionRow({
 					{/* Action row — pin / rename / delete, revealed below the content so
 					    the title + preview can use the full sidebar width. */}
 					<motion.div
-						className={`flex items-center justify-end gap-0.5 pr-2 overflow-hidden rounded-b-lg ${
-							isActive ? "bg-sidebar-accent" : ""
-						}`}
+						className="flex items-center justify-end gap-0.5 pr-2 overflow-hidden rounded-b-lg"
 						initial={false}
 						animate={{
 							height: showActions ? 32 : 0,
 							opacity: showActions ? 1 : 0,
 						}}
 						transition={{ duration: reduced ? 0 : 0.18, ease: [0.16, 1, 0.3, 1] }}
-						style={{
-							pointerEvents: showActions ? "auto" : "none",
-							background: !isActive && hovered ? "hsl(var(--accent) / 0.5)" : undefined,
-						}}
+						style={{ pointerEvents: showActions ? "auto" : "none" }}
 					>
 						{onPin && (
 							<motion.button
