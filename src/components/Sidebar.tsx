@@ -24,8 +24,8 @@ interface SidebarProps {
 	onSessionSelect: (id: string) => void;
 	onNewSession: () => void;
 	onDeleteSession: (id: string) => void;
-	/** Rename a session (sticky, user-chosen title). */
-	onRenameSession?: (id: string, title: string) => void;
+	/** Open the rename popup for a session. */
+	onRequestRename?: (id: string) => void;
 	/** Pin/unpin a session. */
 	onPinSession?: (id: string, pinned: boolean) => void;
 	/** Deep content search across message bodies. */
@@ -52,7 +52,7 @@ export function Sidebar({
 	onSessionSelect,
 	onNewSession,
 	onDeleteSession,
-	onRenameSession,
+	onRequestRename,
 	onPinSession,
 	onDeepSearch,
 	onChangeView,
@@ -139,7 +139,7 @@ export function Sidebar({
 								onSelect={onSessionSelect}
 								onNewSession={onNewSession}
 								onDeleteSession={onDeleteSession}
-								onRenameSession={onRenameSession}
+								onRequestRename={onRequestRename}
 								onPinSession={onPinSession}
 								onDeepSearch={onDeepSearch}
 								homeDir={homeDir}

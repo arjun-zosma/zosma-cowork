@@ -1,16 +1,7 @@
-import {
-	Check,
-	Folder,
-	FolderPlus,
-	MessagesSquare,
-	Pencil,
-	Pin,
-	Search,
-	Trash2,
-	X,
-} from "lucide-react";
+import { Folder, FolderPlus, MessagesSquare, Pencil, Pin, Search, Trash2 } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Tooltip } from "@/components/ui/tooltip";
 
 interface Session {
 	id: string;
@@ -54,8 +45,8 @@ interface ConversationSearchProps {
 	onSelect: (id: string) => void;
 	onNewSession: () => void;
 	onDeleteSession: (id: string) => void;
-	/** Rename a session (persists a sticky, user-chosen title). */
-	onRenameSession?: (id: string, title: string) => void;
+	/** Open the rename popup for a session (mirrors the delete confirm flow). */
+	onRequestRename?: (id: string) => void;
 	/** Pin/unpin a session (sorts it to the top). */
 	onPinSession?: (id: string, pinned: boolean) => void;
 	/**
@@ -83,12 +74,20 @@ function formatTime(ts: number): string {
 
 const easeOutExpo = [0.16, 1, 0.3, 1] as const;
 
+// Shared look for the hover-revealed action buttons: small circular "raised"
+// pills with a subtle drop shadow so they float above the row.
+const RAISED_BTN = "flex items-center justify-center w-7 h-7 rounded-full border border-border/60";
+const RAISED_STYLE = {
+	boxShadow: "0 2px 5px hsl(0 0% 0% / 0.16), 0 1px 1.5px hsl(0 0% 0% / 0.10)",
+} as const;
+const RAISED_HOVER_SHADOW = "0 5px 12px hsl(0 0% 0% / 0.22), 0 2px 4px hsl(0 0% 0% / 0.14)";
+
 export function ConversationSearch({
 	sessions,
 	onSelect,
 	onNewSession,
 	onDeleteSession,
-	onRenameSession,
+	onRequestRename,
 	onPinSession,
 	onDeepSearch,
 	activeSessionId,
@@ -98,6 +97,13 @@ export function ConversationSearch({
 	const [focused, setFocused] = useState(false);
 	const reduced = useReducedMotion();
 	const inputRef = useRef<HTMLInputElement>(null);
+	// Infinite-scroll pagination: render PAGE_SIZE rows, grow as a sentinel near
+	// the bottom scrolls into view. Search/filtering still runs over ALL sessions
+	// — this only caps how many of the matches are mounted at once.
+	const PAGE_SIZE = 10;
+	const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+	const scrollRef = useRef<HTMLDivElement>(null);
+	const sentinelRef = useRef<HTMLDivElement>(null);
 
 	// Deep search runs in the sidecar (greps message bodies). We debounce it and
 	// merge its file hits into the local title/preview filter. `deepIds === null`
@@ -160,8 +166,38 @@ export function ConversationSearch({
 		});
 	}, [sessions, query, deepIds]);
 
-	const pinned = useMemo(() => filtered.filter((s) => s.pinned), [filtered]);
-	const unpinned = useMemo(() => filtered.filter((s) => !s.pinned), [filtered]);
+	// Reset paging to the top whenever the result set changes (new query / deep
+	// search hits) so a fresh search always starts from the most relevant rows.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: reset on result-set change
+	useEffect(() => {
+		setVisibleCount(PAGE_SIZE);
+		scrollRef.current?.scrollTo?.({ top: 0 });
+	}, [query, deepIds]);
+
+	// Only the first `visibleCount` matches are mounted; the rest reveal on scroll.
+	const visible = useMemo(() => filtered.slice(0, visibleCount), [filtered, visibleCount]);
+	const hasMore = visibleCount < filtered.length;
+
+	const pinned = useMemo(() => visible.filter((s) => s.pinned), [visible]);
+	const unpinned = useMemo(() => visible.filter((s) => !s.pinned), [visible]);
+
+	// Grow the page when the bottom sentinel enters the scroll viewport.
+	useEffect(() => {
+		if (!hasMore) return;
+		const root = scrollRef.current;
+		const sentinel = sentinelRef.current;
+		if (!root || !sentinel) return;
+		const io = new IntersectionObserver(
+			(entries) => {
+				if (entries.some((e) => e.isIntersecting)) {
+					setVisibleCount((c) => c + PAGE_SIZE);
+				}
+			},
+			{ root, rootMargin: "120px" },
+		);
+		io.observe(sentinel);
+		return () => io.disconnect();
+	}, [hasMore]);
 
 	const renderRow = (session: Session, i: number) => (
 		<SessionRow
@@ -174,7 +210,7 @@ export function ConversationSearch({
 			snippet={deepSnippets.get(session.id)}
 			onSelect={onSelect}
 			onDelete={onDeleteSession}
-			onRename={onRenameSession}
+			onRequestRename={onRequestRename}
 			onPin={onPinSession}
 		/>
 	);
@@ -282,7 +318,7 @@ export function ConversationSearch({
 			</div>
 
 			{/* ── Session list ── */}
-			<div className="flex-1 overflow-y-auto px-2 pb-2 space-y-px">
+			<div ref={scrollRef} className="flex-1 overflow-y-auto px-2 pb-2 space-y-px">
 				{/* Empty state — AnimatePresence only here so it fades in/out */}
 				<AnimatePresence>
 					{filtered.length === 0 && (
@@ -335,6 +371,17 @@ export function ConversationSearch({
 				{/* Rows — no AnimatePresence wrapper so filtered-out rows leave DOM
 				    immediately; this keeps test assertions reliable */}
 				{unpinned.map((session, i) => renderRow(session, i))}
+
+				{/* Infinite-scroll sentinel — grows the page as it nears the viewport */}
+				{hasMore && (
+					<div ref={sentinelRef} className="flex items-center justify-center py-3" aria-hidden>
+						<motion.span
+							className="w-4 h-4 rounded-full border-2 border-muted-foreground/20 border-t-muted-foreground/50"
+							animate={reduced ? {} : { rotate: 360 }}
+							transition={{ duration: 0.8, repeat: Number.POSITIVE_INFINITY, ease: "linear" }}
+						/>
+					</div>
+				)}
 			</div>
 		</div>
 	);
@@ -353,7 +400,8 @@ interface SessionRowProps {
 	snippet?: string;
 	onSelect: (id: string) => void;
 	onDelete: (id: string) => void;
-	onRename?: (id: string, title: string) => void;
+	/** Open the rename popup for this session. */
+	onRequestRename?: (id: string) => void;
 	onPin?: (id: string, pinned: boolean) => void;
 }
 
@@ -366,45 +414,28 @@ function SessionRow({
 	snippet,
 	onSelect,
 	onDelete,
-	onRename,
+	onRequestRename,
 	onPin,
 }: SessionRowProps) {
 	const [hovered, setHovered] = useState(false);
-	const [renaming, setRenaming] = useState(false);
-	const [draft, setDraft] = useState(session.title);
-	const renameInputRef = useRef<HTMLInputElement>(null);
+	const [focusWithin, setFocusWithin] = useState(false);
 	const path = displayPath(session.folder, homeDir);
 
-	useEffect(() => {
-		if (renaming) {
-			renameInputRef.current?.focus();
-			renameInputRef.current?.select();
-		}
-	}, [renaming]);
-
-	const startRename = () => {
-		setDraft(session.title);
-		setRenaming(true);
-	};
-	const commitRename = () => {
-		const next = draft.trim();
-		setRenaming(false);
-		if (next && next !== session.title) onRename?.(session.id, next);
-	};
-	const cancelRename = () => {
-		setRenaming(false);
-		setDraft(session.title);
-	};
-
-	// Action row sits BELOW the content; it reveals on hover/focus and stays
-	// visible while pinned. Buttons remain mounted (height-collapsed) so the
-	// list stays keyboard-reachable and predictable for tests.
-	const showActions = hovered || session.pinned;
+	// Actions are OVERLAID on the right edge (not stacked below) so the row keeps
+	// a constant height — no resize/jump when you hover. They reveal on hover or
+	// keyboard focus; buttons stay mounted so the list is keyboard-reachable and
+	// predictable for tests.
+	const showActions = hovered || focusWithin;
 
 	return (
 		<motion.div
-			layout
-			className="relative rounded-lg overflow-hidden transition-colors"
+			// `layout="position"` (not bare `layout`) animates only position changes
+			// — e.g. rows sliding when a session is pinned. Bare `layout` would also
+			// animate SIZE by scaling, which squished/distorted the row when toggling
+			// into the inline rename field. Position-only keeps reorder smooth while
+			// the rename swap happens instantly with no jank.
+			layout="position"
+			className="relative rounded-lg transition-colors"
 			initial={reduced ? false : { opacity: 0, x: -8 }}
 			animate={{ opacity: 1, x: 0 }}
 			transition={{
@@ -414,6 +445,10 @@ function SessionRow({
 			}}
 			onHoverStart={() => setHovered(true)}
 			onHoverEnd={() => setHovered(false)}
+			onFocus={() => setFocusWithin(true)}
+			onBlur={(e) => {
+				if (!e.currentTarget.contains(e.relatedTarget as Node)) setFocusWithin(false);
+			}}
 			// Single background lives on the container so the content row and the
 			// action row read as ONE surface (no double-tint seam on hover).
 			style={{
@@ -438,129 +473,77 @@ function SessionRow({
 				)}
 			</AnimatePresence>
 
-			{renaming ? (
-				// ── Inline rename field ──
-				<div
-					className="w-full pl-4 pr-2 py-2.5 rounded-lg"
-					style={{ background: "hsl(var(--accent) / 0.5)" }}
+			<>
+				{/* Row button — bg-sidebar-accent class on active for test compat.
+					    Double-click opens the rename popup (same as the edit button). */}
+				<motion.button
+					type="button"
+					onClick={() => onSelect(session.id)}
+					onDoubleClick={() => onRequestRename?.(session.id)}
+					className={`w-full text-left pl-4 pr-3 pt-2.5 pb-1.5 rounded-t-lg ${
+						isActive ? "bg-sidebar-accent" : ""
+					}`}
+					whileTap={reduced ? {} : { scale: 0.985 }}
+					transition={{ duration: 0.12, ease: [0.16, 1, 0.3, 1] }}
 				>
-					<div className="flex items-center gap-1.5">
-						<input
-							ref={renameInputRef}
-							type="text"
-							aria-label={`Rename session ${session.title}`}
-							value={draft}
-							onChange={(e) => setDraft(e.target.value)}
-							onKeyDown={(e) => {
-								if (e.key === "Enter") {
-									e.preventDefault();
-									commitRename();
-								} else if (e.key === "Escape") {
-									e.preventDefault();
-									cancelRename();
-								}
-							}}
-							onBlur={commitRename}
-							className="flex-1 min-w-0 bg-transparent text-[12px] font-medium rounded px-1 py-0.5 border focus:outline-none"
-							style={{
-								color: "hsl(var(--foreground))",
-								borderColor: "hsl(var(--primary) / 0.5)",
-								background: "hsl(var(--background) / 0.6)",
-							}}
-						/>
-						<button
-							type="button"
-							aria-label="Save title"
-							onMouseDown={(e) => e.preventDefault()}
-							onClick={commitRename}
-							className="shrink-0 flex items-center justify-center w-6 h-6 rounded-md"
-							style={{ color: "hsl(var(--primary))", background: "hsl(var(--primary) / 0.12)" }}
-						>
-							<Check className="w-3 h-3" />
-						</button>
-						<button
-							type="button"
-							aria-label="Cancel rename"
-							onMouseDown={(e) => e.preventDefault()}
-							onClick={cancelRename}
-							className="shrink-0 flex items-center justify-center w-6 h-6 rounded-md text-muted-foreground bg-muted"
-						>
-							<X className="w-3 h-3" />
-						</button>
-					</div>
-				</div>
-			) : (
-				<>
-					{/* Row button — bg-sidebar-accent class on active for test compat */}
-					<motion.button
-						type="button"
-						onClick={() => onSelect(session.id)}
-						onDoubleClick={() => onRename && startRename()}
-						className={`w-full text-left pl-4 pr-3 pt-2.5 pb-2 rounded-t-lg ${
-							isActive ? "bg-sidebar-accent" : ""
+					{/* Title */}
+					<span
+						className={`flex items-center gap-1 text-[12px] truncate leading-snug ${
+							isActive ? "font-semibold" : "font-medium"
 						}`}
-						whileTap={reduced ? {} : { scale: 0.985 }}
-						transition={{ duration: 0.12, ease: [0.16, 1, 0.3, 1] }}
-					>
-						{/* Title */}
-						<span
-							className={`flex items-center gap-1 text-[12px] truncate leading-snug ${
-								isActive ? "font-semibold" : "font-medium"
-							}`}
-							style={{
-								color: isActive ? "hsl(var(--foreground))" : "hsl(var(--foreground) / 0.8)",
-							}}
-						>
-							{session.pinned && (
-								<Pin
-									className="w-2.5 h-2.5 shrink-0"
-									fill="currentColor"
-									style={{ color: "hsl(var(--primary) / 0.7)" }}
-								/>
-							)}
-							<span className="truncate">{session.title}</span>
-						</span>
-
-						{/* Folder path — where this session was opened (VSCode-style) */}
-						<span
-							className="flex items-center gap-1 mt-0.5 text-[10px] truncate"
-							style={{ color: "hsl(var(--muted-foreground) / 0.5)" }}
-							title={session.folder || path}
-						>
-							<Folder className="w-2.5 h-2.5 shrink-0" />
-							<span className="truncate">{path}</span>
-						</span>
-
-						{/* Last message / search snippet + timestamp */}
-						<span className="flex items-center gap-1.5 mt-0.5">
-							<span
-								className="text-[11px] truncate flex-1"
-								style={{ color: "hsl(var(--muted-foreground) / 0.55)" }}
-							>
-								{snippet || session.lastMessage}
-							</span>
-							<span
-								className="text-[10px] shrink-0 tabular-nums"
-								style={{ color: "hsl(var(--muted-foreground) / 0.35)" }}
-							>
-								{formatTime(session.timestamp)}
-							</span>
-						</span>
-					</motion.button>
-
-					{/* Action row — pin / rename / delete, revealed below the content so
-					    the title + preview can use the full sidebar width. */}
-					<motion.div
-						className="flex items-center justify-end gap-0.5 pr-2 overflow-hidden rounded-b-lg"
-						initial={false}
-						animate={{
-							height: showActions ? 32 : 0,
-							opacity: showActions ? 1 : 0,
+						style={{
+							color: isActive ? "hsl(var(--foreground))" : "hsl(var(--foreground) / 0.8)",
 						}}
-						transition={{ duration: reduced ? 0 : 0.18, ease: [0.16, 1, 0.3, 1] }}
-						style={{ pointerEvents: showActions ? "auto" : "none" }}
 					>
-						{onPin && (
+						{session.pinned && (
+							<Pin
+								className="w-2.5 h-2.5 shrink-0"
+								fill="currentColor"
+								style={{ color: "hsl(var(--primary) / 0.7)" }}
+							/>
+						)}
+						<span className="truncate">{session.title}</span>
+					</span>
+
+					{/* Folder path — where this session was opened (VSCode-style) */}
+					<span
+						className="flex items-center gap-1 mt-0.5 text-[10px] truncate"
+						style={{ color: "hsl(var(--muted-foreground) / 0.5)" }}
+						title={session.folder || path}
+					>
+						<Folder className="w-2.5 h-2.5 shrink-0" />
+						<span className="truncate">{path}</span>
+					</span>
+
+					{/* Last message / search snippet + timestamp */}
+					<span className="flex items-center gap-1.5 mt-0.5">
+						<span
+							className="text-[11px] truncate flex-1"
+							style={{ color: "hsl(var(--muted-foreground) / 0.55)" }}
+						>
+							{snippet || session.lastMessage}
+						</span>
+						<span
+							className="text-[10px] shrink-0 tabular-nums"
+							style={{ color: "hsl(var(--muted-foreground) / 0.35)" }}
+						>
+							{formatTime(session.timestamp)}
+						</span>
+					</span>
+				</motion.button>
+
+				{/* Action row — sits BELOW the description in normal flow and ALWAYS
+					    reserves its height, so the row never resizes. We only toggle its
+					    visibility (opacity) on hover / focus; buttons stay mounted. */}
+				<motion.div
+					className="flex items-center justify-end gap-1.5 px-2 pb-1.5"
+					initial={false}
+					animate={{ opacity: showActions ? 1 : 0 }}
+					transition={{ duration: reduced ? 0 : 0.16, ease: [0.16, 1, 0.3, 1] }}
+					style={{ pointerEvents: showActions ? "auto" : "none" }}
+				>
+					{onPin && (
+						<Tooltip content={session.pinned ? "Unpin chat" : "Pin chat"}>
 							<motion.button
 								type="button"
 								aria-label={`${session.pinned ? "Unpin" : "Pin"} session ${session.title}`}
@@ -568,34 +551,42 @@ function SessionRow({
 									e.stopPropagation();
 									onPin(session.id, !session.pinned);
 								}}
-								className="flex items-center justify-center w-6 h-6 rounded-md"
-								style={{
-									color: session.pinned ? "hsl(var(--primary))" : "hsl(var(--muted-foreground))",
-									background: session.pinned ? "hsl(var(--primary) / 0.12)" : "transparent",
-								}}
+								className={`${RAISED_BTN} ${
+									session.pinned
+										? "bg-primary/15 text-primary"
+										: "bg-background text-muted-foreground"
+								}`}
+								style={RAISED_STYLE}
 								tabIndex={showActions ? 0 : -1}
-								whileHover={{ background: "hsl(var(--primary) / 0.15)" }}
+								whileHover={reduced ? {} : { scale: 1.14, y: -1, boxShadow: RAISED_HOVER_SHADOW }}
 								whileTap={reduced ? {} : { scale: 0.9 }}
+								transition={{ duration: 0.14, ease: [0.16, 1, 0.3, 1] }}
 							>
 								<Pin className="w-3 h-3" fill={session.pinned ? "currentColor" : "none"} />
 							</motion.button>
-						)}
-						{onRename && (
+						</Tooltip>
+					)}
+					{onRequestRename && (
+						<Tooltip content="Rename chat">
 							<motion.button
 								type="button"
 								aria-label={`Rename session ${session.title}`}
 								onClick={(e) => {
 									e.stopPropagation();
-									startRename();
+									onRequestRename(session.id);
 								}}
-								className="flex items-center justify-center w-6 h-6 rounded-md text-muted-foreground"
+								className={`${RAISED_BTN} bg-background text-muted-foreground`}
+								style={RAISED_STYLE}
 								tabIndex={showActions ? 0 : -1}
-								whileHover={{ background: "hsl(var(--muted))" }}
+								whileHover={reduced ? {} : { scale: 1.14, y: -1, boxShadow: RAISED_HOVER_SHADOW }}
 								whileTap={reduced ? {} : { scale: 0.9 }}
+								transition={{ duration: 0.14, ease: [0.16, 1, 0.3, 1] }}
 							>
 								<Pencil className="w-3 h-3" />
 							</motion.button>
-						)}
+						</Tooltip>
+					)}
+					<Tooltip content="Delete chat">
 						<motion.button
 							type="button"
 							aria-label={`Delete session ${session.title}`}
@@ -603,16 +594,18 @@ function SessionRow({
 								e.stopPropagation();
 								onDelete(session.id);
 							}}
-							className="flex items-center justify-center w-6 h-6 rounded-md"
+							className={`${RAISED_BTN} bg-background text-destructive`}
+							style={RAISED_STYLE}
 							tabIndex={showActions ? 0 : -1}
-							whileHover={{ background: "hsl(var(--destructive) / 0.12)" }}
+							whileHover={reduced ? {} : { scale: 1.14, y: -1, boxShadow: RAISED_HOVER_SHADOW }}
 							whileTap={reduced ? {} : { scale: 0.9 }}
+							transition={{ duration: 0.14, ease: [0.16, 1, 0.3, 1] }}
 						>
-							<Trash2 className="w-3 h-3 text-destructive" />
+							<Trash2 className="w-3 h-3" />
 						</motion.button>
-					</motion.div>
-				</>
-			)}
+					</Tooltip>
+				</motion.div>
+			</>
 		</motion.div>
 	);
 }

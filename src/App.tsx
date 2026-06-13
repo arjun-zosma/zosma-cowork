@@ -12,6 +12,7 @@ import { SplashScreen } from "@/components/SplashScreen";
 import { TelemetryConsentDialog } from "@/components/TelemetryConsentDialog";
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { RenameDialog } from "@/components/ui/rename-dialog";
 import { useUpdate } from "@/contexts/UpdateProvider";
 import { useAuth } from "@/hooks/useAuth";
 import { usePiStream } from "@/hooks/usePiStream";
@@ -70,18 +71,10 @@ function App() {
 	} = usePiStream();
 	const telemetry = useTelemetry();
 	const [showTelemetryConsent, setShowTelemetryConsent] = useState<boolean | null>(null);
-	const personaRef = useRef("");
 
-	// Load custom instructions (persona) from settings
-	useEffect(() => {
-		invoke<{ persona?: string }>("get_settings")
-			.then((settings) => {
-				if (settings?.persona) {
-					personaRef.current = settings.persona;
-				}
-			})
-			.catch(() => {});
-	}, []);
+	// Custom instructions are no longer prepended to messages here. They live in
+	// INSTRUCTIONS.md and the sidecar injects them into the system prompt as
+	// always-on context (see CustomInstructions / save_instructions).
 
 	// Remove right-click prevention — users need copy/paste/inspect.
 	// The desktop app is a serious tool, not a locked-down kiosk.
@@ -463,8 +456,7 @@ function App() {
 
 			// Keep loadedSessionMessages — startStream only produces the new turn.
 			// Merging happens in the stream-complete effect above.
-			const finalText = personaRef.current ? `${personaRef.current}\n\n---\n\n${text}` : text;
-			startStream(finalText);
+			startStream(text);
 		},
 		[activeSessionFile, startStream, models, activeModelId, workspaceCwd],
 	);
@@ -645,6 +637,7 @@ function App() {
 	const [fontScale, setFontScale] = useState<number>(() => getFontScale());
 
 	const [pendingDelete, setPendingDelete] = useState<{ file: string; title: string } | null>(null);
+	const [pendingRename, setPendingRename] = useState<{ file: string; title: string } | null>(null);
 
 	const handleDeleteSession = useCallback(
 		(file: string) => {
@@ -669,6 +662,15 @@ function App() {
 			dispatch({ type: "RESET" });
 		}
 	}, [pendingDelete, activeSessionFile, dispatch]);
+
+	// Open the rename popup for a session (mirrors the delete confirm flow).
+	const handleRequestRename = useCallback(
+		(file: string) => {
+			const entry = sessionEntries.find((s) => s.file === file);
+			setPendingRename({ file, title: entry?.title ?? "" });
+		},
+		[sessionEntries],
+	);
 
 	// ── Rename a session (sticky, user-chosen title) ──
 	// biome-ignore lint/correctness/useExhaustiveDependencies: loadSessionList is a stable component-scope reconcile helper
@@ -793,6 +795,16 @@ function App() {
 				variant="destructive"
 			/>
 
+			{/* Rename chat popup */}
+			<RenameDialog
+				open={pendingRename !== null}
+				initialTitle={pendingRename?.title ?? ""}
+				onClose={() => setPendingRename(null)}
+				onSave={(title) => {
+					if (pendingRename) handleRenameSession(pendingRename.file, title);
+				}}
+			/>
+
 			{/* Telemetry consent dialog (overlays everything on first launch) */}
 			{showTelemetryConsent && (
 				<TelemetryConsentDialog
@@ -828,7 +840,7 @@ function App() {
 							}}
 							homeDir={homeDir ?? undefined}
 							onDeleteSession={handleDeleteSession}
-							onRenameSession={handleRenameSession}
+							onRequestRename={handleRequestRename}
 							onPinSession={handlePinSession}
 							onDeepSearch={handleDeepSearch}
 							onChangeView={(view) => {
@@ -881,7 +893,7 @@ function App() {
 								}}
 								homeDir={homeDir ?? undefined}
 								onDeleteSession={handleDeleteSession}
-								onRenameSession={handleRenameSession}
+								onRequestRename={handleRequestRename}
 								onPinSession={handlePinSession}
 								onDeepSearch={handleDeepSearch}
 								onChangeView={(view) => {

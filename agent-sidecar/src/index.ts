@@ -140,6 +140,11 @@ import {
 	saveCustomProvider,
 } from "./custom-providers.js";
 import { coworkSelfKnowledgePointer, writeAboutDoc } from "./about-cowork.js";
+import {
+	customInstructionsBlock,
+	loadInstructions,
+	saveInstructions,
+} from "./instructions-store.js";
 // Vendored pi-anthropic-messages bridge (see scripts/prebuild.mjs). Without
 // this loaded as an extension, Claude Pro/Max OAuth requests are
 // fingerprinted by Anthropic as a "third-party app" and rejected with a
@@ -421,6 +426,17 @@ interface GetSettingsCommand {
 	id: string;
 }
 
+interface GetInstructionsCommand {
+	type: "get_instructions";
+	id: string;
+}
+
+interface SaveInstructionsCommand {
+	type: "save_instructions";
+	id: string;
+	content: string;
+}
+
 interface SaveSettingsCommand {
 	type: "save_settings";
 	id: string;
@@ -569,6 +585,8 @@ type Command =
 	| ListSessionsCommand
 	| GetSettingsCommand
 	| SaveSettingsCommand
+	| GetInstructionsCommand
+	| SaveInstructionsCommand
 	| ListExtensionsCommand
 	| InstallExtensionCommand
 	| UninstallExtensionCommand
@@ -1332,15 +1350,32 @@ async function main() {
 			// sessions in ~/.zosmaai/cowork/sessions) loads on demand via `read`.
 			// Writing must never break init, so fall back to the bare prompt.
 			systemPromptOverride: () => {
+				// User's custom instructions (issue: settings persona). Stored as
+				// INSTRUCTIONS.md under the Cowork dir and appended as always-on
+				// context. Read lazily here so a save + loader.reload() picks up the
+				// latest content without restarting the app. Never fatal: a read
+				// failure just omits the block.
+				let personaBlock = "";
+				try {
+					personaBlock = customInstructionsBlock(
+						loadInstructions(zosmaAgentDir(zosmaDir)),
+					);
+				} catch (err) {
+					log(
+						"loadInstructions failed (custom instructions omitted): %s",
+						err instanceof Error ? err.message : String(err),
+					);
+				}
 				try {
 					const aboutPath = writeAboutDoc(zosmaAgentDir(zosmaDir));
-					return `${ZOSMA_SYSTEM_PROMPT}\n\n${coworkSelfKnowledgePointer(aboutPath)}`;
+					const base = `${ZOSMA_SYSTEM_PROMPT}\n\n${coworkSelfKnowledgePointer(aboutPath)}`;
+					return personaBlock ? `${base}\n\n${personaBlock}` : base;
 				} catch (err) {
 					log(
 						"writeAboutDoc failed (self-knowledge pointer omitted): %s",
 						err instanceof Error ? err.message : String(err),
 					);
-					return ZOSMA_SYSTEM_PROMPT;
+					return personaBlock ? `${ZOSMA_SYSTEM_PROMPT}\n\n${personaBlock}` : ZOSMA_SYSTEM_PROMPT;
 				}
 			},
 			appendSystemPromptOverride: () => [],
@@ -2721,6 +2756,51 @@ async function main() {
 					try {
 						const { id: _sid, type: _t, ...rest } = cmd as Record<string, unknown>;
 						saveSettings(zosmaDir, rest as Record<string, unknown>);
+						send({ type: "result", id: cmd.id, data: { success: true } });
+					} catch (err) {
+						send({
+							type: "error",
+							id: cmd.id,
+							message: err instanceof Error ? err.message : String(err),
+						});
+					}
+					break;
+				}
+
+				// ── get_instructions ────────────────────────────────────────
+				// Read the user's custom instructions Markdown (INSTRUCTIONS.md).
+				case "get_instructions": {
+					try {
+						const content = loadInstructions(zosmaAgentDir(zosmaDir));
+						send({ type: "result", id: cmd.id, data: { content } });
+					} catch (err) {
+						send({
+							type: "error",
+							id: cmd.id,
+							message: err instanceof Error ? err.message : String(err),
+						});
+					}
+					break;
+				}
+
+				// ── save_instructions ───────────────────────────────────────
+				// Persist INSTRUCTIONS.md, then reload the live session so the new
+				// custom instructions take effect immediately — for the active chat
+				// (conversation preserved) AND every subsequent new chat (the shared
+				// resource loader's cached system prompt is refreshed by reload()).
+				case "save_instructions": {
+					try {
+						saveInstructions(zosmaAgentDir(zosmaDir), cmd.content ?? "");
+						try {
+							if (session) await session.reload();
+						} catch (reloadErr) {
+							// Non-fatal: the file is saved and will apply to the next
+							// new chat even if a live reload couldn't run right now.
+							log(
+								"save_instructions: session.reload() failed (applies on next new chat): %s",
+								reloadErr instanceof Error ? reloadErr.message : String(reloadErr),
+							);
+						}
 						send({ type: "result", id: cmd.id, data: { success: true } });
 					} catch (err) {
 						send({

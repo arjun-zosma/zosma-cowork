@@ -1218,6 +1218,35 @@ async fn save_settings(settings: Value, s: State<'_, AppState>) -> Result<Value,
     scmd_r(&s, &payload, std::time::Duration::from_secs(10)).await
 }
 
+#[tauri::command]
+async fn get_instructions(s: State<'_, AppState>) -> Result<String, String> {
+    let id = format!("gi-{}", uuid_v4());
+    scmd_r(
+        &s,
+        &serde_json::json!({"type":"get_instructions","id":id}),
+        std::time::Duration::from_secs(10),
+    )
+    .await
+    .map(|r| {
+        r.get("content")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    })
+}
+
+#[tauri::command]
+async fn save_instructions(content: String, s: State<'_, AppState>) -> Result<Value, String> {
+    let id = format!("si-{}", uuid_v4());
+    // session.reload() in the sidecar can take a moment; allow more headroom.
+    scmd_r(
+        &s,
+        &serde_json::json!({"type":"save_instructions","id":id,"content":content}),
+        std::time::Duration::from_secs(30),
+    )
+    .await
+}
+
 // ── Extension commands ────────────────────────────────────────────
 
 #[tauri::command]
@@ -2141,6 +2170,8 @@ pub fn run() {
             get_workspace,
             get_settings,
             save_settings,
+            get_instructions,
+            save_instructions,
             list_extensions,
             install_extension,
             uninstall_extension,

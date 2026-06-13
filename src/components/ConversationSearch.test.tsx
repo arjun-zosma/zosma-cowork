@@ -1,8 +1,22 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { ConversationSearch } from "./ConversationSearch";
 
 const noop = () => {};
+
+// jsdom has no IntersectionObserver; the infinite-scroll sentinel constructs one
+// whenever there are more matches than a page. Stub it so those paths render.
+beforeAll(() => {
+	class IO {
+		observe() {}
+		unobserve() {}
+		disconnect() {}
+		takeRecords() {
+			return [];
+		}
+	}
+	vi.stubGlobal("IntersectionObserver", IO);
+});
 
 const mockSessions = [
 	{ id: "1", title: "React project setup", lastMessage: "How do I init", timestamp: 1000 },
@@ -172,59 +186,91 @@ describe("ConversationSearch — pin / rename / deep search", () => {
 		expect(onPin).toHaveBeenCalledWith("2", false);
 	});
 
-	it("renames a session via the inline editor (Enter commits)", () => {
-		const onRename = vi.fn();
+	it("requests a rename popup when the edit button is clicked", () => {
+		const onRequestRename = vi.fn();
 		render(
 			<ConversationSearch
 				sessions={sessions}
 				onSelect={noop}
 				onNewSession={noop}
 				onDeleteSession={noop}
-				onRenameSession={onRename}
+				onRequestRename={onRequestRename}
 			/>,
 		);
 		fireEvent.click(screen.getByRole("button", { name: "Rename session React project setup" }));
-		const input = screen.getByLabelText("Rename session React project setup") as HTMLInputElement;
-		fireEvent.change(input, { target: { value: "My renamed chat" } });
-		fireEvent.keyDown(input, { key: "Enter" });
-		expect(onRename).toHaveBeenCalledWith("1", "My renamed chat");
+		expect(onRequestRename).toHaveBeenCalledWith("1");
 	});
 
-	it("does not call onRenameSession when the title is unchanged", () => {
-		const onRename = vi.fn();
+	it("requests a rename popup on double-click of a row", () => {
+		const onRequestRename = vi.fn();
 		render(
 			<ConversationSearch
 				sessions={sessions}
 				onSelect={noop}
 				onNewSession={noop}
 				onDeleteSession={noop}
-				onRenameSession={onRename}
+				onRequestRename={onRequestRename}
 			/>,
 		);
-		fireEvent.click(screen.getByRole("button", { name: "Rename session Debugging memory leaks" }));
-		const input = screen.getByLabelText("Rename session Debugging memory leaks");
-		fireEvent.keyDown(input, { key: "Enter" });
-		expect(onRename).not.toHaveBeenCalled();
+		fireEvent.doubleClick(screen.getByText("Debugging memory leaks"));
+		expect(onRequestRename).toHaveBeenCalledWith("3");
 	});
 
-	it("cancels rename on Escape", () => {
-		const onRename = vi.fn();
+	it("does not render an inline rename input (editing happens in a popup)", () => {
 		render(
 			<ConversationSearch
 				sessions={sessions}
 				onSelect={noop}
 				onNewSession={noop}
 				onDeleteSession={noop}
-				onRenameSession={onRename}
+				onRequestRename={vi.fn()}
 			/>,
 		);
+		// Only the search box is a textbox; clicking edit must NOT add an inline input.
+		expect(screen.getAllByRole("textbox")).toHaveLength(1);
 		fireEvent.click(screen.getByRole("button", { name: "Rename session React project setup" }));
-		const input = screen.getByLabelText("Rename session React project setup");
-		fireEvent.change(input, { target: { value: "throwaway" } });
-		fireEvent.keyDown(input, { key: "Escape" });
-		expect(onRename).not.toHaveBeenCalled();
-		// Editor closed, original title shown again.
-		expect(screen.getByText("React project setup")).toBeDefined();
+		expect(screen.getAllByRole("textbox")).toHaveLength(1);
+	});
+});
+
+describe("ConversationSearch — pagination (infinite scroll)", () => {
+	const many = Array.from({ length: 25 }, (_, i) => ({
+		id: String(i),
+		title: `Session number ${i}`,
+		lastMessage: `message ${i}`,
+		timestamp: 1000 - i, // descending so order is stable (0 first)
+	}));
+
+	it("only renders the first page (10) of rows initially", () => {
+		render(
+			<ConversationSearch
+				sessions={many}
+				onSelect={noop}
+				onNewSession={noop}
+				onDeleteSession={noop}
+			/>,
+		);
+		// One Delete button per rendered row.
+		const rows = screen.getAllByRole("button", { name: /^Delete session/ });
+		expect(rows).toHaveLength(10);
+		expect(screen.getByText("Session number 0")).toBeDefined();
+		expect(screen.queryByText("Session number 12")).toBeNull();
+	});
+
+	it("search matches sessions beyond the first page", () => {
+		render(
+			<ConversationSearch
+				sessions={many}
+				onSelect={noop}
+				onNewSession={noop}
+				onDeleteSession={noop}
+			/>,
+		);
+		// 'Session number 20' is past the initial 10, but search scans ALL sessions.
+		const input = screen.getByPlaceholderText("Search conversations...");
+		fireEvent.change(input, { target: { value: "number 20" } });
+		expect(screen.getByText("Session number 20")).toBeDefined();
+		expect(screen.queryByText("Session number 0")).toBeNull();
 	});
 });
 
