@@ -365,14 +365,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(
 				}}
 			>
 				{/* Outer shell */}
-				<div
-					ref={shellRef}
-					className="relative rounded-2xl border transition-colors focus-within:border-[hsl(var(--ring)/0.4)]"
-					style={{
-						background: "hsl(var(--card))",
-						borderColor: "hsl(var(--border))",
-					}}
-				>
+				<div ref={shellRef} className="composer-glass relative rounded-2xl">
 					{paletteOpen && (
 						<CommandPalette
 							anchorRef={shellRef}

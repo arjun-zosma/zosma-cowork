@@ -116,11 +116,10 @@ export function ChatMessageItem({ message, detailsExpanded, models }: ChatMessag
 	return (
 		<div className="group px-4 py-1.5 animate-fade-in">
 			<div
-				className="flex gap-3.5 mx-auto w-full rounded-2xl px-4 py-3 transition-colors"
-				style={{
-					maxWidth: "var(--chat-max-width, 820px)",
-					background: isUser ? "hsl(var(--chat-user-bg))" : "hsl(var(--chat-assistant-bg))",
-				}}
+				className={`chat-bubble ${
+					isUser ? "chat-bubble-user" : "chat-bubble-assistant"
+				} flex gap-3.5 mx-auto w-full px-4 py-3`}
+				style={{ maxWidth: "var(--chat-max-width, 820px)" }}
 			>
 			{/* Avatar */}
 			<div className="flex-shrink-0">

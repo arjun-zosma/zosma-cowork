@@ -609,6 +609,62 @@ async fn get_active_model(s: State<'_, AppState>) -> Result<Value, String> {
     .await
 }
 
+/// #268 — Token/cache usage, cost, and live context-window usage for the
+/// active session. Mirrors the sidecar's `get_session_stats` (which wraps the
+/// SDK's `AgentSession.getSessionStats()`). The UI polls this when a turn
+/// completes and on session load to drive the always-on status line.
+#[tauri::command]
+async fn get_session_stats(s: State<'_, AppState>) -> Result<Value, String> {
+    let id = format!("gss-{}", uuid_v4());
+    scmd_r(
+        &s,
+        &serde_json::json!({"type":"get_session_stats","id":id}),
+        std::time::Duration::from_secs(10),
+    )
+    .await
+}
+
+/// #268 — Current reasoning ("thinking") level plus the levels the active model
+/// supports. Returned shape: `{ thinkingLevel, availableThinkingLevels,
+/// supportsThinking }`.
+#[tauri::command]
+async fn get_thinking_level(s: State<'_, AppState>) -> Result<Value, String> {
+    let id = format!("gtl-{}", uuid_v4());
+    scmd_r(
+        &s,
+        &serde_json::json!({"type":"get_thinking_level","id":id}),
+        std::time::Duration::from_secs(10),
+    )
+    .await
+}
+
+/// #268 — Set the reasoning level (`off | minimal | low | medium | high |
+/// xhigh`). The SDK clamps to what the model supports, so the result echoes the
+/// EFFECTIVE level the engine adopted.
+#[tauri::command]
+async fn set_thinking_level(level: String, s: State<'_, AppState>) -> Result<Value, String> {
+    let id = format!("stl-{}", uuid_v4());
+    scmd_r(
+        &s,
+        &serde_json::json!({"type":"set_thinking_level","id":id,"level":level}),
+        std::time::Duration::from_secs(10),
+    )
+    .await
+}
+
+/// #268 — Advance the reasoning level to the next supported step (wraps around).
+/// Powers the clickable thinking-level pill in the status line.
+#[tauri::command]
+async fn cycle_thinking_level(s: State<'_, AppState>) -> Result<Value, String> {
+    let id = format!("ctl-{}", uuid_v4());
+    scmd_r(
+        &s,
+        &serde_json::json!({"type":"cycle_thinking_level","id":id}),
+        std::time::Duration::from_secs(10),
+    )
+    .await
+}
+
 #[tauri::command]
 async fn send_prompt(
     text: String,
@@ -1962,6 +2018,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_models,
             get_active_model,
+            get_session_stats,
+            get_thinking_level,
+            set_thinking_level,
+            cycle_thinking_level,
             send_prompt,
             abort_prompt,
             steer_prompt,

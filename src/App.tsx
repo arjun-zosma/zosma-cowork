@@ -53,6 +53,11 @@ function App() {
 		clearQueue,
 		toolPhase,
 		dispatch,
+		// #268 — status-line telemetry + reasoning control
+		sessionStats,
+		thinking,
+		refreshStats,
+		cycleThinking,
 	} = usePiStream();
 	const telemetry = useTelemetry();
 	const [showTelemetryConsent, setShowTelemetryConsent] = useState<boolean | null>(null);
@@ -536,9 +541,11 @@ function App() {
 			dispatch({ type: "RESET" });
 			setLoadedSessionMessages(null);
 			setActiveSessionFile(`session-${Date.now()}.jsonl`);
+			// #268 — fresh session starts with empty totals; resync the footer.
+			void refreshStats();
 			return resolvedCwd;
 		},
-		[dispatch],
+		[dispatch, refreshStats],
 	);
 
 	// "New session" ALWAYS asks for a folder first (native picker), then starts
@@ -660,13 +667,16 @@ function App() {
 				if (typeof data.cwd === "string") {
 					setWorkspaceCwd(data.cwd);
 				}
+				// #268 — the sidecar rebinds to the loaded session; pull its
+				// token/cost/context totals so the footer reflects history.
+				void refreshStats();
 			} catch (err) {
 				console.error("Failed to load session:", err);
 			} finally {
 				setLoadingSession(false);
 			}
 		},
-		[activeSessionFile, dispatch],
+		[activeSessionFile, dispatch, refreshStats],
 	);
 
 	// ── Build display messages ──
@@ -903,6 +913,10 @@ function App() {
 								/* Issue #201, PR 3 — queue visibility + editing. */
 								queue={streamState.queue}
 								onEditQueue={handleEditQueue}
+								/* #268 — always-on status line telemetry + reasoning. */
+								sessionStats={sessionStats}
+								thinking={thinking}
+								onCycleThinking={cycleThinking}
 								sessionKey={activeSessionFile ?? "new"}
 								onRetry={() => {
 									const lastUser = [...displayMessages].reverse().find((m) => m.role === "user");

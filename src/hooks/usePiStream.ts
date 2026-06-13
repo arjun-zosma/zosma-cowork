@@ -1,3 +1,9 @@
+import {
+	type SessionStats,
+	type ThinkingLevel,
+	type ThinkingState,
+	THINKING_LEVELS,
+} from "@/lib/sessionStats";
 import type { ChatMessage, ToolCallInfo } from "@/types";
 import type {
 	PiErrorEvent,
@@ -7,9 +13,16 @@ import type {
 	PiToolExecutionStartEvent,
 	PiToolExecutionUpdateEvent,
 } from "@/types/pi-events";
-import { Channel, invoke } from "@tauri-apps/api/core";
+import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useReducer, useState } from "react";
+
+/** Default reasoning slice before the sidecar reports the real level (#268). */
+const INITIAL_THINKING: ThinkingState = {
+	level: "medium",
+	available: [...THINKING_LEVELS],
+	supported: true,
+};
 
 /**
  * Snapshot of the agent session's pending message queue (#201 PR 3).
@@ -387,6 +400,93 @@ function extractToolCallInfo(tc: {
 export function usePiStream() {
 	const [state, dispatch] = useReducer(streamReducer, INITIAL_STATE);
 	const [toolPhase, setToolPhase] = useState<ToolPhase | null>(null);
+	// #268 — always-on status-line telemetry. `sessionStats` is the
+	// authoritative snapshot from the sidecar (token/cache/cost + live context
+	// usage); `thinking` mirrors the engine's current reasoning level + the
+	// model-supported ladder. Both live as plain state (not in the reducer)
+	// since they're fetched async and don't participate in streaming reducer
+	// transitions.
+	const [sessionStats, setSessionStats] = useState<SessionStats | null>(null);
+	const [thinking, setThinking] = useState<ThinkingState>(INITIAL_THINKING);
+
+	/**
+	 * Pull the authoritative session stats from the sidecar. Called after each
+	 * turn completes and on session load/reset. No-ops gracefully off-Tauri
+	 * (remote/browser mode) where the command isn't available.
+	 */
+	const refreshStats = useCallback(async () => {
+		if (!isTauri()) return;
+		try {
+			const stats = (await invoke("get_session_stats")) as SessionStats;
+			setSessionStats(stats);
+			if (stats.thinkingLevel) {
+				setThinking({
+					level: stats.thinkingLevel,
+					available:
+						stats.availableThinkingLevels && stats.availableThinkingLevels.length > 0
+							? stats.availableThinkingLevels
+							: [...THINKING_LEVELS],
+					supported: stats.supportsThinking ?? true,
+				});
+			}
+		} catch (err) {
+			console.warn("[cowork] get_session_stats failed:", err);
+		}
+	}, []);
+
+	/** Apply a specific thinking level; reconciles to the engine's effective
+	 * (clamped) level returned by the sidecar. */
+	const applyThinkingLevel = useCallback(async (level: ThinkingLevel) => {
+		if (!isTauri()) {
+			setThinking((prev) => ({ ...prev, level }));
+			return;
+		}
+		// Optimistic — snap the pill immediately, reconcile on the result.
+		setThinking((prev) => ({ ...prev, level }));
+		try {
+			const res = (await invoke("set_thinking_level", { level })) as {
+				thinkingLevel?: ThinkingLevel;
+				availableThinkingLevels?: ThinkingLevel[];
+				supportsThinking?: boolean;
+			};
+			if (res?.thinkingLevel) {
+				setThinking({
+					level: res.thinkingLevel,
+					available:
+						res.availableThinkingLevels && res.availableThinkingLevels.length > 0
+							? res.availableThinkingLevels
+							: [...THINKING_LEVELS],
+					supported: res.supportsThinking ?? true,
+				});
+			}
+		} catch (err) {
+			console.warn("[cowork] set_thinking_level failed:", err);
+		}
+	}, []);
+
+	/** Advance reasoning to the next supported level (clickable pill). */
+	const cycleThinking = useCallback(async () => {
+		if (!isTauri()) return;
+		try {
+			const res = (await invoke("cycle_thinking_level")) as {
+				thinkingLevel?: ThinkingLevel;
+				availableThinkingLevels?: ThinkingLevel[];
+				supportsThinking?: boolean;
+			};
+			if (res?.thinkingLevel) {
+				setThinking({
+					level: res.thinkingLevel,
+					available:
+						res.availableThinkingLevels && res.availableThinkingLevels.length > 0
+							? res.availableThinkingLevels
+							: [...THINKING_LEVELS],
+					supported: res.supportsThinking ?? true,
+				});
+			}
+		} catch (err) {
+			console.warn("[cowork] cycle_thinking_level failed:", err);
+		}
+	}, []);
 
 	const startStream = useCallback(async (text: string) => {
 		dispatch({ type: "START_STREAM", prompt: text });
@@ -498,6 +598,9 @@ export function usePiStream() {
 					case "agent_end":
 					case "done":
 						dispatch({ type: "STREAM_COMPLETE" });
+						// #268 — a turn just finished: pull fresh token/cost/context
+						// totals so the status line updates as turns complete.
+						void refreshStats();
 						break;
 
 					case "error": {
@@ -540,7 +643,7 @@ export function usePiStream() {
 				error: err instanceof Error ? err.message : String(err),
 			});
 		}
-	}, []);
+	}, [refreshStats]);
 
 	const abortStream = useCallback(async () => {
 		dispatch({ type: "ABORT_STREAM" });
@@ -616,6 +719,49 @@ export function usePiStream() {
 	 * get queue mutations even when no prompt is active — e.g. a
 	 * follow-up dequeues right after STREAM_COMPLETE.
 	 */
+	// #268 — seed the reasoning level on mount and whenever the sidecar
+	// (re)becomes ready. The `ready` payload carries `thinkingLevel`; we also
+	// fetch the full thinking state + stats so the status line is populated from
+	// the first paint of a restored/continued session.
+	useEffect(() => {
+		if (!isTauri()) return;
+		let mounted = true;
+		let unlistenReady: (() => void) | undefined;
+		const seed = async () => {
+			try {
+				const res = (await invoke("get_thinking_level")) as {
+					thinkingLevel?: ThinkingLevel;
+					availableThinkingLevels?: ThinkingLevel[];
+					supportsThinking?: boolean;
+				};
+				if (mounted && res?.thinkingLevel) {
+					setThinking({
+						level: res.thinkingLevel,
+						available:
+							res.availableThinkingLevels && res.availableThinkingLevels.length > 0
+								? res.availableThinkingLevels
+								: [...THINKING_LEVELS],
+						supported: res.supportsThinking ?? true,
+					});
+				}
+			} catch {
+				// sidecar not ready yet — the `ready` listener below retries.
+			}
+			void refreshStats();
+		};
+		void seed();
+		listen("ready", () => {
+			void seed();
+		}).then((fn) => {
+			if (mounted) unlistenReady = fn;
+			else fn();
+		});
+		return () => {
+			mounted = false;
+			unlistenReady?.();
+		};
+	}, [refreshStats]);
+
 	useEffect(() => {
 		let unlisten: (() => void) | undefined;
 		listen<{ steering?: string[]; followUp?: string[] }>(
@@ -645,5 +791,11 @@ export function usePiStream() {
 		clearQueue,
 		dispatch,
 		toolPhase,
+		// #268 — status-line telemetry + reasoning control
+		sessionStats,
+		thinking,
+		refreshStats,
+		setThinkingLevel: applyThinkingLevel,
+		cycleThinking,
 	};
 }

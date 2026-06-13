@@ -2,8 +2,11 @@ import { ChatMessageItem } from "@/components/ChatMessage";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { MessageInput } from "@/components/MessageInput";
 import { StatusBar } from "@/components/StatusBar";
+import { StatusLine } from "@/components/StatusLine";
 import { SuggestedActions } from "@/components/SuggestedActions";
 import type { ToolPhase } from "@/hooks/usePiStream";
+import { findModel } from "@/lib/model-key";
+import type { SessionStats, ThinkingState } from "@/lib/sessionStats";
 import type { ChatMessage, ModelInfo } from "@/types";
 import type { Command } from "@/types/commands";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -38,6 +41,12 @@ interface ChatViewProps {
 	queue?: { steering: readonly string[]; followUp: readonly string[] };
 	/** Issue #201, PR 3 — user pressed Ctrl+↑ to edit the pending queue. */
 	onEditQueue?: () => void;
+	/** #268 — session telemetry for the always-on status line. */
+	sessionStats?: SessionStats | null;
+	/** #268 — reasoning level slice (level + supported ladder). */
+	thinking?: ThinkingState;
+	/** #268 — cycle the reasoning effort from the status-line pill. */
+	onCycleThinking?: () => void;
 }
 
 export function ChatView({
@@ -61,6 +70,9 @@ export function ChatView({
 	onFollowUp,
 	queue,
 	onEditQueue,
+	sessionStats,
+	thinking,
+	onCycleThinking,
 }: ChatViewProps) {
 	const scrollContainerRef = useRef<HTMLDivElement>(null);
 	const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -195,6 +207,18 @@ export function ChatView({
 				toolPhase={toolPhase}
 				onAbort={onAbort}
 			/>
+
+			{/* #268 — always-on telemetry footer. Persists across turns (unlike
+			    the transient StatusBar above, which only shows live activity +
+			    Stop while streaming) so token/cost/context numbers stay legible. */}
+			{thinking && (
+				<StatusLine
+					stats={sessionStats ?? null}
+					thinking={thinking}
+					modelName={findModel(models, currentModelId)?.name}
+					onCycleThinking={onCycleThinking}
+				/>
+			)}
 
 			{/* overflow-hidden gives the slide-up animation a clean clip edge */}
 			<div className="overflow-hidden">

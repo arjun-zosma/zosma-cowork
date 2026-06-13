@@ -188,6 +188,28 @@ interface GetActiveModelCommand {
 	id: string;
 }
 
+// ── #268: status-line telemetry & reasoning control ──
+interface GetSessionStatsCommand {
+	type: "get_session_stats";
+	id: string;
+}
+
+interface GetThinkingLevelCommand {
+	type: "get_thinking_level";
+	id: string;
+}
+
+interface SetThinkingLevelCommand {
+	type: "set_thinking_level";
+	id: string;
+	level: string;
+}
+
+interface CycleThinkingLevelCommand {
+	type: "cycle_thinking_level";
+	id: string;
+}
+
 interface PromptCommand {
 	type: "prompt";
 	id: string;
@@ -487,6 +509,10 @@ type Command =
 	| InitCommand
 	| GetModelsCommand
 	| GetActiveModelCommand
+	| GetSessionStatsCommand
+	| GetThinkingLevelCommand
+	| SetThinkingLevelCommand
+	| CycleThinkingLevelCommand
 	| PromptCommand
 	| AbortCommand
 	| SteerCommand
@@ -1591,6 +1617,9 @@ async function main() {
 						name: session.model.name,
 					}
 				: null,
+			// #268: initial reasoning level so the status line renders correctly
+			// before the first turn completes.
+			thinkingLevel: session?.thinkingLevel ?? null,
 		});
 
 		log("Sidecar ready — %d models available", models.length);
@@ -1833,6 +1862,93 @@ async function main() {
 						data: m
 							? { provider: m.provider, id: m.id, name: m.name }
 							: null,
+					});
+					break;
+				}
+
+				// ── get_session_stats (#268) ──────────────────────────
+				// Token usage, cost, and live context-window usage for the
+				// current session state — powers the always-on status line.
+				// `contextUsage` may be omitted (no model/context window) or
+				// carry null tokens/percent right after compaction; the
+				// frontend renders those gracefully (see docs/rpc.md).
+				case "get_session_stats": {
+					if (!initialized || !session) {
+						send({ type: "error", id: cmd.id, message: "Not initialized" });
+						break;
+					}
+					const stats = session.getSessionStats();
+					send({
+						type: "result",
+						id: cmd.id,
+						data: {
+							...stats,
+							thinkingLevel: session.thinkingLevel,
+							availableThinkingLevels: session.getAvailableThinkingLevels(),
+							supportsThinking: session.supportsThinking(),
+						},
+					});
+					break;
+				}
+
+				// ── get_thinking_level (#268) ────────────────────────
+				case "get_thinking_level": {
+					if (!initialized || !session) {
+						send({ type: "error", id: cmd.id, message: "Not initialized" });
+						break;
+					}
+					send({
+						type: "result",
+						id: cmd.id,
+						data: {
+							thinkingLevel: session.thinkingLevel,
+							availableThinkingLevels: session.getAvailableThinkingLevels(),
+							supportsThinking: session.supportsThinking(),
+						},
+					});
+					break;
+				}
+
+				// ── set_thinking_level (#268) ────────────────────────
+				// The SDK clamps the requested level to what the active model
+				// supports, so we echo back the EFFECTIVE level (session.
+				// thinkingLevel) rather than the requested one.
+				case "set_thinking_level": {
+					if (!initialized || !session) {
+						send({ type: "error", id: cmd.id, message: "Not initialized" });
+						break;
+					}
+					session.setThinkingLevel(cmd.level as Parameters<typeof session.setThinkingLevel>[0]);
+					send({
+						type: "result",
+						id: cmd.id,
+						data: {
+							thinkingLevel: session.thinkingLevel,
+							availableThinkingLevels: session.getAvailableThinkingLevels(),
+							supportsThinking: session.supportsThinking(),
+						},
+					});
+					break;
+				}
+
+				// ── cycle_thinking_level (#268) ──────────────────────
+				// Advances off→minimal→low→medium→high→(xhigh)→off across the
+				// model's supported levels. Returns undefined for non-reasoning
+				// models; we still echo the (unchanged) level for the UI.
+				case "cycle_thinking_level": {
+					if (!initialized || !session) {
+						send({ type: "error", id: cmd.id, message: "Not initialized" });
+						break;
+					}
+					session.cycleThinkingLevel();
+					send({
+						type: "result",
+						id: cmd.id,
+						data: {
+							thinkingLevel: session.thinkingLevel,
+							availableThinkingLevels: session.getAvailableThinkingLevels(),
+							supportsThinking: session.supportsThinking(),
+						},
 					});
 					break;
 				}
