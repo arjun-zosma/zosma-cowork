@@ -1,0 +1,18 @@
+{
+  // CI dependency-vulnerability gate (replaces a bare `npm audit`).
+  // Fails the build on moderate+ advisories, EXCEPT entries explicitly
+  // allowlisted below. Keep this list tiny and always paired with a reason +
+  // removal condition so it never becomes a silent dumping ground.
+  "moderate": true,
+  "allowlist": [
+    // GHSA-gv7w-rqvm-qjhr — esbuild "missing binary integrity verification"
+    // (high). Reaches us ONLY transitively through vite@6 (a devDependency:
+    // @vitejs/plugin-react, vitest, @tailwindcss/vite, vite-plugin-pwa). It is
+    // build-time tooling and never ships in the produced app binary.
+    // The patched esbuild (>=0.28.1) is only pulled by vite@8; a bare override
+    // breaks our production build (esbuild 0.28 drops down-leveling of certain
+    // destructuring to our legacy browser target). REMOVE this entry once the
+    // vite 6 -> 8 upgrade lands. See issue #264.
+    "GHSA-gv7w-rqvm-qjhr"
+  ]
+}
