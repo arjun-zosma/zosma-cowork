@@ -397,11 +397,10 @@ function SessionRow({
 		setDraft(session.title);
 	};
 
-	// Hover actions show on hover/focus; pin also stays visible while pinned.
+	// Action row sits BELOW the content; it reveals on hover/focus and stays
+	// visible while pinned. Buttons remain mounted (height-collapsed) so the
+	// list stays keyboard-reachable and predictable for tests.
 	const showActions = hovered || session.pinned;
-	const actionCount = (onPin ? 1 : 0) + (onRename ? 1 : 0) + 1; // +delete
-	// Reserve right padding so the title never collides with action icons.
-	const rightPad = `${actionCount * 1.55 + 0.4}rem`;
 
 	return (
 		<motion.div
@@ -491,11 +490,10 @@ function SessionRow({
 						type="button"
 						onClick={() => onSelect(session.id)}
 						onDoubleClick={() => onRename && startRename()}
-						className={`w-full text-left pl-4 py-2.5 rounded-lg transition-colors ${
+						className={`w-full text-left pl-4 pr-3 pt-2.5 pb-2 rounded-t-lg transition-colors ${
 							isActive ? "bg-sidebar-accent" : ""
 						}`}
 						style={{
-							paddingRight: rightPad,
 							background: !isActive && hovered ? "hsl(var(--accent) / 0.5)" : undefined,
 						}}
 						whileTap={reduced ? {} : { scale: 0.985 }}
@@ -547,17 +545,22 @@ function SessionRow({
 						</span>
 					</motion.button>
 
-					{/* Hover actions — pin / rename / delete, slide in from the right */}
+					{/* Action row — pin / rename / delete, revealed below the content so
+					    the title + preview can use the full sidebar width. */}
 					<motion.div
-						className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-0.5"
+						className={`flex items-center justify-end gap-0.5 pr-2 overflow-hidden rounded-b-lg ${
+							isActive ? "bg-sidebar-accent" : ""
+						}`}
 						initial={false}
-						animate={
-							reduced
-								? { opacity: showActions ? 1 : 0 }
-								: { opacity: showActions ? 1 : 0, x: showActions ? 0 : 6 }
-						}
-						transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
-						style={{ pointerEvents: showActions ? "auto" : "none" }}
+						animate={{
+							height: showActions ? 32 : 0,
+							opacity: showActions ? 1 : 0,
+						}}
+						transition={{ duration: reduced ? 0 : 0.18, ease: [0.16, 1, 0.3, 1] }}
+						style={{
+							pointerEvents: showActions ? "auto" : "none",
+							background: !isActive && hovered ? "hsl(var(--accent) / 0.5)" : undefined,
+						}}
 					>
 						{onPin && (
 							<motion.button
