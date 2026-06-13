@@ -133,6 +133,7 @@ import {
 	listCustomProviders,
 	saveCustomProvider,
 } from "./custom-providers.js";
+import { coworkSelfKnowledgePointer, writeAboutDoc } from "./about-cowork.js";
 // Vendored pi-anthropic-messages bridge (see scripts/prebuild.mjs). Without
 // this loaded as an extension, Claude Pro/Max OAuth requests are
 // fingerprinted by Anthropic as a "third-party app" and rejected with a
@@ -1364,7 +1365,24 @@ async function main() {
 				zosmaGoogleCalendar,
 				...diskExtensionFactories,
 			],
-			systemPromptOverride: () => ZOSMA_SYSTEM_PROMPT,
+			// Cowork self-knowledge (#263): materialize the ABOUT doc under the
+			// user's Cowork dir and point the model at it. Progressive disclosure —
+			// only this tiny pointer is always in context; the full knowledge
+			// (it's a GUI on pi; extensions in ~/.pi/agent; skills via skills.sh;
+			// sessions in ~/.zosmaai/cowork/sessions) loads on demand via `read`.
+			// Writing must never break init, so fall back to the bare prompt.
+			systemPromptOverride: () => {
+				try {
+					const aboutPath = writeAboutDoc(zosmaAgentDir(zosmaDir));
+					return `${ZOSMA_SYSTEM_PROMPT}\n\n${coworkSelfKnowledgePointer(aboutPath)}`;
+				} catch (err) {
+					log(
+						"writeAboutDoc failed (self-knowledge pointer omitted): %s",
+						err instanceof Error ? err.message : String(err),
+					);
+					return ZOSMA_SYSTEM_PROMPT;
+				}
+			},
 			appendSystemPromptOverride: () => [],
 		});
 		// Resource resolution shells out to pi's package manager (e.g.
