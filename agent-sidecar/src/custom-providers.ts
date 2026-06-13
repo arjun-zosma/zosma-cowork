@@ -56,8 +56,38 @@ export interface SaveCustomProviderInput {
 		name?: string;
 		contextWindow?: number;
 		maxTokens?: number;
+		/**
+		 * Whether this model supports reasoning/"thinking". Drives the SDK's
+		 * supportsThinking() and the status-line pill. Optional — auto-discovery
+		 * can't detect it (the OpenAI-completions API exposes no capability
+		 * probe), so it's only set explicitly and then preserved across re-saves.
+		 */
+		reasoning?: boolean;
+		/**
+		 * Curates pi's abstract reasoning ladder to what the model truly supports.
+		 * A `null` value removes that level; a string remaps it to the provider's
+		 * own value. e.g. `{minimal:null,low:null,medium:null,xhigh:null}` =>
+		 * an honest binary off/on toggle.
+		 */
+		thinkingLevelMap?: Record<string, string | null>;
+		/** Wire-format quirks (e.g. `{thinkingFormat:"qwen-chat-template"}`). */
+		compat?: Record<string, unknown>;
 	}>;
 }
+
+/**
+ * Per-model fields the UI's discovery/manual save path doesn't supply but that
+ * encode real capability. We preserve these across re-saves so a hand-tuned
+ * (or future UI-set) reasoning configuration isn't silently clobbered when the
+ * model list is re-discovered from the server. See saveCustomProvider().
+ */
+const PRESERVED_MODEL_FIELDS = [
+	"reasoning",
+	"thinkingLevelMap",
+	"compat",
+	"contextWindow",
+	"maxTokens",
+] as const;
 
 /** Outward-facing summary — never leaks the raw API key. */
 export interface CustomProviderSummary {
@@ -200,14 +230,22 @@ function validateInput(input: SaveCustomProviderInput): {
 	name: string;
 	baseUrl: string;
 	apiKey: string;
-	models: Array<{ id: string; name: string; contextWindow?: number; maxTokens?: number }>;
+	models: Array<{
+		id: string;
+		name: string;
+		contextWindow?: number;
+		maxTokens?: number;
+		reasoning?: boolean;
+		thinkingLevelMap?: Record<string, string | null>;
+		compat?: Record<string, unknown>;
+	}>;
 } {
 	const id = require_("id", input.id);
 	const name = require_("name", input.name);
 	const baseUrl = normaliseBaseUrl(input.baseUrl);
 
 	if (!Array.isArray(input.models) || input.models.length === 0) {
-		throw new Error('Custom provider: at least one model is required');
+		throw new Error("Custom provider: at least one model is required");
 	}
 	const models = input.models.map((m, i) => {
 		const modelId = require_(`models[${i}].id`, m?.id);
@@ -216,6 +254,9 @@ function validateInput(input: SaveCustomProviderInput): {
 			name: m.name && m.name.trim().length > 0 ? m.name.trim() : modelId,
 			...(m.contextWindow !== undefined ? { contextWindow: m.contextWindow } : {}),
 			...(m.maxTokens !== undefined ? { maxTokens: m.maxTokens } : {}),
+			...(m.reasoning !== undefined ? { reasoning: m.reasoning } : {}),
+			...(m.thinkingLevelMap !== undefined ? { thinkingLevelMap: m.thinkingLevelMap } : {}),
+			...(m.compat !== undefined ? { compat: m.compat } : {}),
 		};
 	});
 
@@ -238,20 +279,57 @@ export function saveCustomProvider(modelsPath: string, input: SaveCustomProvider
 	// current key", not "clear it". Preserve a previously stored real key so
 	// editing the base URL or model id doesn't silently drop auth. To switch a
 	// keyed provider back to keyless, delete and re-create it.
+	const prev = config.providers[v.id];
 	let apiKey = v.apiKey;
 	if (apiKey === NO_AUTH_SENTINEL) {
-		const prev = config.providers[v.id];
 		const prevKey = prev && typeof prev.apiKey === "string" ? prev.apiKey : "";
 		if (prevKey && prevKey !== NO_AUTH_SENTINEL) {
 			apiKey = prevKey;
 		}
 	}
+
+	// Re-saves (model re-discovery, base-URL edits, manual entry) replace the
+	// model list. Auto-discovery only knows each model's id — it can't detect
+	// reasoning support or wire-format quirks — so blindly overwriting would
+	// wipe any capability a user (or a future capability editor) configured.
+	// Merge by id: incoming wins where it sets a field; otherwise keep the
+	// previously stored capability fields (and a non-id display name).
+	const prevById = new Map<string, Record<string, unknown>>();
+	const prevModels =
+		prev && Array.isArray((prev as { models?: unknown }).models)
+			? (prev as { models: unknown[] }).models
+			: [];
+	for (const pm of prevModels) {
+		if (pm && typeof pm === "object" && typeof (pm as { id?: unknown }).id === "string") {
+			prevById.set((pm as { id: string }).id, pm as Record<string, unknown>);
+		}
+	}
+	const models = v.models.map((m) => {
+		const prevM = prevById.get(m.id);
+		if (!prevM) return m;
+		const merged: Record<string, unknown> = { ...m };
+		for (const k of PRESERVED_MODEL_FIELDS) {
+			if (merged[k] === undefined && prevM[k] !== undefined) merged[k] = prevM[k];
+		}
+		// Discovery supplies only the id (name defaults to the id). Keep a
+		// previously chosen friendly name rather than resetting it.
+		if (
+			merged.name === m.id &&
+			typeof prevM.name === "string" &&
+			prevM.name.trim() &&
+			prevM.name !== m.id
+		) {
+			merged.name = prevM.name;
+		}
+		return merged;
+	});
+
 	config.providers[v.id] = {
 		name: v.name,
 		baseUrl: v.baseUrl,
 		apiKey,
 		api: "openai-completions",
-		models: v.models,
+		models,
 	};
 	writeConfig(modelsPath, config);
 }

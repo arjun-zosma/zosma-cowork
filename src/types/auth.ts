@@ -56,5 +56,16 @@ export type SaveCustomProviderInput = {
 	baseUrl: string;
 	/** Optional. Empty / undefined → sidecar stores a sentinel placeholder. */
 	apiKey?: string;
-	models: { id: string; name?: string; contextWindow?: number; maxTokens?: number }[];
+	models: {
+		id: string;
+		name?: string;
+		contextWindow?: number;
+		maxTokens?: number;
+		/** Reasoning/"thinking" capability — drives the status-line pill. */
+		reasoning?: boolean;
+		/** Curates pi's reasoning ladder (null removes a level, string remaps). */
+		thinkingLevelMap?: Record<string, string | null>;
+		/** Wire-format quirks, e.g. `{ thinkingFormat: "qwen-chat-template" }`. */
+		compat?: Record<string, unknown>;
+	}[];
 };

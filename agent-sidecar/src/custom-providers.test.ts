@@ -156,36 +156,89 @@ describe("custom-providers", () => {
 		expect(config.providers["custom-local-llm"].apiKey).toBe("no-auth");
 	});
 
+	// ── per-model reasoning capability (status-line honesty) ──────────────
+
+	it("persists explicit reasoning capability fields on a model", () => {
+		saveCustomProvider(modelsPath, {
+			...VALID_INPUT,
+			models: [
+				{
+					id: "gemma-thinker",
+					reasoning: true,
+					contextWindow: 131072,
+					compat: { thinkingFormat: "qwen-chat-template" },
+					thinkingLevelMap: { minimal: null, low: null, medium: null, xhigh: null },
+				},
+			],
+		});
+		const m = JSON.parse(readFileSync(modelsPath, "utf-8")).providers["custom-local-llm"].models[0];
+		expect(m.reasoning).toBe(true);
+		expect(m.contextWindow).toBe(131072);
+		expect(m.compat).toEqual({ thinkingFormat: "qwen-chat-template" });
+		expect(m.thinkingLevelMap).toEqual({ minimal: null, low: null, medium: null, xhigh: null });
+	});
+
+	// Auto-discovery only knows model ids, so a re-save (or base-URL edit)
+	// passes bare {id} entries. Capability a user configured must survive.
+	it("preserves per-model reasoning capability across a re-save/re-discovery", () => {
+		saveCustomProvider(modelsPath, {
+			...VALID_INPUT,
+			models: [
+				{
+					id: "gemma-thinker",
+					name: "Gemma Thinker",
+					reasoning: true,
+					compat: { thinkingFormat: "qwen-chat-template" },
+					thinkingLevelMap: { minimal: null, low: null, medium: null, xhigh: null },
+				},
+			],
+		});
+		// Simulate the discovery path: bare ids, no capability, no friendly name.
+		saveCustomProvider(modelsPath, { ...VALID_INPUT, models: [{ id: "gemma-thinker" }] });
+
+		const m = JSON.parse(readFileSync(modelsPath, "utf-8")).providers["custom-local-llm"].models[0];
+		expect(m.reasoning).toBe(true);
+		expect(m.compat).toEqual({ thinkingFormat: "qwen-chat-template" });
+		expect(m.thinkingLevelMap).toEqual({ minimal: null, low: null, medium: null, xhigh: null });
+		// A previously chosen display name is kept rather than reset to the id.
+		expect(m.name).toBe("Gemma Thinker");
+	});
+
+	it("lets an incoming save override a previously stored capability field", () => {
+		saveCustomProvider(modelsPath, {
+			...VALID_INPUT,
+			models: [{ id: "m1", reasoning: true }],
+		});
+		saveCustomProvider(modelsPath, {
+			...VALID_INPUT,
+			models: [{ id: "m1", reasoning: false }],
+		});
+		const m = JSON.parse(readFileSync(modelsPath, "utf-8")).providers["custom-local-llm"].models[0];
+		expect(m.reasoning).toBe(false);
+	});
+
 	// ── validation ─────────────────────────────────────────────────────
 
 	it("rejects an empty id", () => {
-		expect(() => saveCustomProvider(modelsPath, { ...VALID_INPUT, id: "" })).toThrow(
-			/id/i,
-		);
+		expect(() => saveCustomProvider(modelsPath, { ...VALID_INPUT, id: "" })).toThrow(/id/i);
 	});
 
 	it("rejects an empty name", () => {
-		expect(() => saveCustomProvider(modelsPath, { ...VALID_INPUT, name: "  " })).toThrow(
-			/name/i,
-		);
+		expect(() => saveCustomProvider(modelsPath, { ...VALID_INPUT, name: "  " })).toThrow(/name/i);
 	});
 
 	it("rejects an empty base URL", () => {
-		expect(() => saveCustomProvider(modelsPath, { ...VALID_INPUT, baseUrl: "" })).toThrow(
+		expect(() => saveCustomProvider(modelsPath, { ...VALID_INPUT, baseUrl: "" })).toThrow(/url/i);
+	});
+
+	it("rejects a non-http(s) base URL", () => {
+		expect(() => saveCustomProvider(modelsPath, { ...VALID_INPUT, baseUrl: "ftp://nope" })).toThrow(
 			/url/i,
 		);
 	});
 
-	it("rejects a non-http(s) base URL", () => {
-		expect(() =>
-			saveCustomProvider(modelsPath, { ...VALID_INPUT, baseUrl: "ftp://nope" }),
-		).toThrow(/url/i);
-	});
-
 	it("rejects an empty models array", () => {
-		expect(() => saveCustomProvider(modelsPath, { ...VALID_INPUT, models: [] })).toThrow(
-			/model/i,
-		);
+		expect(() => saveCustomProvider(modelsPath, { ...VALID_INPUT, models: [] })).toThrow(/model/i);
 	});
 
 	it("rejects a model with an empty id", () => {
