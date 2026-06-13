@@ -892,7 +892,29 @@ async fn has_credentials(s: State<'_, AppState>) -> Result<bool, String> {
         std::time::Duration::from_secs(30),
     )
     .await?;
-    Ok(r.get("providers")
+    let has_auth = r
+        .get("providers")
+        .and_then(|v| v.as_array())
+        .map(|a| !a.is_empty())
+        .unwrap_or(false);
+    if has_auth {
+        return Ok(true);
+    }
+    // A configured Custom Local LLM (issue #207) is a complete, working setup
+    // even though it leaves no entry in auth storage — Ollama / LM Studio need
+    // no API key, so `get_auth_status` reports zero providers for them. Without
+    // this, saving a local model on the Welcome screen flips nothing in
+    // `has_credentials`, `needsOnboarding` stays true, and the UI bounces the
+    // user straight back to the "Get started" onboarding screen they just left.
+    let cid = format!("hclcp-{}", uuid_v4());
+    let cr = scmd_r(
+        &s,
+        &serde_json::json!({"type":"list_custom_providers","id":cid}),
+        std::time::Duration::from_secs(30),
+    )
+    .await?;
+    Ok(cr
+        .get("providers")
         .and_then(|v| v.as_array())
         .map(|a| !a.is_empty())
         .unwrap_or(false))
