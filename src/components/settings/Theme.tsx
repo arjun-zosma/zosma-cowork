@@ -46,17 +46,12 @@ export function Theme({ fontScale: controlledScale, onFontScaleChange }: ThemePr
 			<motion.button
 				type="button"
 				onClick={handleToggle}
-				className="w-full flex items-center justify-between px-4 py-3 rounded-lg border border-border"
-				whileHover={reduced ? {} : { background: "hsl(var(--muted) / 0.3)" }}
+				className="glass w-full flex items-center justify-between px-4 py-3"
 				whileTap={reduced ? {} : { scale: 0.99 }}
 				transition={{ duration: 0.14, ease: [0.16, 1, 0.3, 1] }}
-				style={{ background: "transparent" }}
 			>
 				<div className="flex items-center gap-3">
-					<div
-						className="flex items-center justify-center w-8 h-8 rounded-lg"
-						style={{ background: "hsl(var(--muted) / 0.6)" }}
-					>
+					<div className="flex items-center justify-center w-8 h-8 rounded-lg bg-primary/10">
 						{isDark ? (
 							<Moon className="w-4 h-4 text-primary" />
 						) : (
@@ -106,12 +101,9 @@ export function Theme({ fontScale: controlledScale, onFontScaleChange }: ThemePr
 								key={scale}
 								type="button"
 								onClick={() => handleFontScale(scale)}
-								className="flex-1 flex flex-col items-center gap-1.5 px-3 py-2.5 rounded-lg border transition-colors"
-								style={{
-									borderColor: isActive ? "hsl(var(--primary) / 0.5)" : "hsl(var(--border))",
-									background: isActive ? "hsl(var(--primary) / 0.08)" : "transparent",
-								}}
-								whileHover={reduced ? {} : { background: "hsl(var(--muted) / 0.3)" }}
+								className={`glass flex-1 flex flex-col items-center gap-1.5 px-3 py-2.5 transition-colors ${
+									isActive ? "border-primary/50 bg-primary/10" : ""
+								}`}
 								whileTap={reduced ? {} : { scale: 0.97 }}
 								transition={{ duration: 0.14, ease: [0.16, 1, 0.3, 1] }}
 							>
@@ -138,10 +130,7 @@ export function Theme({ fontScale: controlledScale, onFontScaleChange }: ThemePr
 				</div>
 
 				{/* Quick preview of the selected size */}
-				<div
-					className="mt-3 px-3 py-2 rounded-lg border border-border"
-					style={{ background: "hsl(var(--muted) / 0.3)" }}
-				>
+				<div className="glass mt-3 px-3 py-2">
 					<p className="text-xs text-muted-foreground">
 						{effectiveScale === 1
 							? "Default size — 1×"

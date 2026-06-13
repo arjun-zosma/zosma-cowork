@@ -17,13 +17,10 @@ export function Telemetry({ enabled, onToggle }: Props) {
 				Help us improve without sharing personal data.
 			</p>
 
-			<div className="rounded-lg border border-border px-4 py-3.5 bg-card">
+			<div className="glass px-4 py-3.5">
 				<div className="flex items-start gap-4">
 					{/* Icon */}
-					<div
-						className="flex items-center justify-center w-8 h-8 rounded-lg shrink-0 mt-0.5"
-						style={{ background: "hsl(var(--muted) / 0.6)" }}
-					>
+					<div className="flex items-center justify-center w-8 h-8 rounded-lg shrink-0 mt-0.5 bg-primary/10">
 						<BarChart2 className="w-4 h-4 text-primary" />
 					</div>
 

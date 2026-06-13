@@ -568,11 +568,57 @@ body[data-wallpaper]::before {
 	z-index: 1;
 }
 .glass {
-	background: hsl(var(--elev-bg) / calc(var(--elev-glass-alpha) - 0.12));
+	background: linear-gradient(
+		160deg,
+		hsl(var(--brand) / 0.05) 0%,
+		hsl(var(--elev-bg) / calc(var(--elev-glass-alpha) - 0.1)) 45%,
+		hsl(var(--elev-bg) / calc(var(--elev-glass-alpha) - 0.12)) 100%
+	);
 	backdrop-filter: blur(calc(var(--elev-glass-blur) - 2px)) saturate(130%);
 	-webkit-backdrop-filter: blur(calc(var(--elev-glass-blur) - 2px)) saturate(130%);
 	border: 1px solid hsl(var(--elev-border) / 0.6);
 	border-radius: var(--radius-xl);
+	box-shadow: 0 1px 0 0 hsl(var(--elev-highlight) / 0.4) inset, 0 8px 22px -16px
+		hsl(var(--elev-shadow) / 0.3);
+}
+
+/* ── Settings nav rail (#278) ──
+   Glass rail variant for the Settings nav + mobile chrome so they match the
+   home sidebar: translucent blurred surface, faint brand wash, inset edge
+   highlight, and a hairline divider on the trailing edge (rather than a flat
+   1px border). Pointer-events off on the wash keep content interactive. */
+.settings-rail {
+	position: relative;
+	background: hsl(var(--sidebar-background) / var(--elev-glass-alpha));
+	backdrop-filter: blur(var(--elev-glass-blur)) saturate(140%);
+	-webkit-backdrop-filter: blur(var(--elev-glass-blur)) saturate(140%);
+}
+.settings-rail::before {
+	content: "";
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	z-index: 0;
+	background: linear-gradient(
+		160deg,
+		hsl(var(--brand) / 0.06) 0%,
+		transparent 45%,
+		hsl(var(--brand-2) / 0.05) 100%
+	);
+}
+.settings-rail > * {
+	position: relative;
+	z-index: 1;
+}
+/* Trailing edge variants: a hairline divider + inset highlight in the chosen
+   direction, replacing the old flat `border` dividers. */
+.settings-rail-right {
+	border-right: 1px solid hsl(var(--elev-border) / 0.7);
+	box-shadow: 1px 0 0 0 hsl(var(--elev-highlight) / 0.3) inset;
+}
+.settings-rail-bottom {
+	border-bottom: 1px solid hsl(var(--elev-border) / 0.7);
+	box-shadow: 0 1px 0 0 hsl(var(--elev-highlight) / 0.3) inset;
 }
 
 /* ── Composer glass (#268 UI refresh) ──

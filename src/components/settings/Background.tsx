@@ -134,7 +134,7 @@ export function Background() {
 
 			{/* ── Custom color picker ── */}
 			{cfg.mode === "solid" && (
-				<div className="mt-6 flex flex-col sm:flex-row gap-5 items-start">
+				<div className="glass mt-6 p-4 flex flex-col sm:flex-row gap-5 items-start">
 					<div className="wallpaper-color-picker">
 						<HexColorPicker color={color} onChange={(c) => update({ solidColor: c })} />
 					</div>
@@ -148,7 +148,7 @@ export function Background() {
 							value={color}
 							onChange={(e) => update({ solidColor: e.target.value })}
 							spellCheck={false}
-							className="w-24 px-2 py-1.5 rounded-md border border-border bg-transparent text-[13px] font-mono text-foreground uppercase"
+							className="w-24 px-2 py-1.5 rounded-md border border-border bg-transparent text-[13px] font-mono text-foreground uppercase focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:border-primary/50"
 						/>
 					</div>
 				</div>

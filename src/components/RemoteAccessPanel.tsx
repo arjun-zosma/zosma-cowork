@@ -169,9 +169,9 @@ export function RemoteAccessPanel() {
 	const hasTailscale = urls.some((u) => u.label === "Tailscale");
 
 	return (
-		<div className="rounded-lg border border-border bg-card overflow-hidden">
+		<div className="glass overflow-hidden">
 			{/* ── Header ────────────────────────────────────────── */}
-			<div className="flex items-center justify-between p-4 bg-muted/10">
+			<div className="flex items-center justify-between p-4">
 				<div className="flex items-center gap-3">
 					<div
 						className={`w-9 h-9 rounded-lg flex items-center justify-center ${
@@ -302,7 +302,7 @@ export function RemoteAccessPanel() {
 					</div>
 
 					{/* ── Info box ─────────────────────────────────────── */}
-					<div className="rounded-lg bg-muted/20 border border-border p-3 space-y-2">
+					<div className="glass p-3 space-y-2">
 						{/* Local access info */}
 						<div className="flex gap-2 text-xs text-muted-foreground">
 							<Shield className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />

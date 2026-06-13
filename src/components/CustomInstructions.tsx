@@ -79,10 +79,7 @@ export function CustomInstructions() {
 
 	return (
 		<div>
-			<div
-				data-color-mode={colorMode}
-				className="rounded-md overflow-hidden border border-sidebar-border"
-			>
+			<div data-color-mode={colorMode} className="glass overflow-hidden">
 				<MDEditor
 					value={instructions}
 					onChange={handleChange}

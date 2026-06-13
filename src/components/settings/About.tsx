@@ -20,7 +20,7 @@ export function About() {
 				Zosma Cowork — built openly, runs locally.
 			</p>
 
-			<div className="rounded-lg border border-border overflow-hidden bg-card">
+			<div className="glass overflow-hidden">
 				{/* App identity */}
 				<div className="px-4 py-4 flex items-center gap-3">
 					<img
@@ -46,7 +46,7 @@ export function About() {
 					)}
 				</div>
 
-				<div style={{ height: 1, background: "hsl(var(--border))" }} />
+				<div className="h-px bg-[hsl(var(--elev-border)/0.6)]" />
 
 				{/* Meta rows */}
 				<div className="px-4 py-3 space-y-2.5">

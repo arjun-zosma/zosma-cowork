@@ -430,7 +430,7 @@ function ExtensionDetail({
 			</div>
 
 			{/* Source */}
-			<div className="rounded-xl p-3 text-[11px] bg-muted/60 text-muted-foreground space-y-1">
+			<div className="glass p-3 text-[11px] text-muted-foreground space-y-1">
 				<div className="flex items-center gap-1.5">
 					<Package className="w-3 h-3" />
 					<span className="font-medium">Source:</span>

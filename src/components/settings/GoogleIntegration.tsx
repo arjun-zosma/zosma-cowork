@@ -162,7 +162,7 @@ export function GoogleIntegration() {
 	const inFlight = phase !== "idle" && phase !== "done";
 
 	return (
-		<div className="rounded-lg border border-border overflow-hidden bg-card">
+		<div className="glass overflow-hidden">
 			{/* Header row */}
 			<div className="px-3.5 py-3">
 				<div className="flex items-center gap-3">
@@ -207,7 +207,7 @@ export function GoogleIntegration() {
 
 			{/* Connected — show per-product scope badges */}
 			{connected && (
-				<div className="px-3.5 pb-3 pt-0" style={{ borderTop: "1px solid hsl(var(--border))" }}>
+				<div className="px-3.5 pb-3 pt-0 border-t border-[hsl(var(--elev-border)/0.6)]">
 					<div className="pt-2.5 flex flex-wrap gap-1.5">
 						{PRODUCT_CONFIG.map(({ id, label, Icon }) => {
 							const granted = products[id] ?? false;
@@ -239,8 +239,7 @@ export function GoogleIntegration() {
 			{/* Error message */}
 			{error && (
 				<div
-					className="px-3.5 pb-3"
-					style={{ borderTop: connected || error ? "1px solid hsl(var(--border))" : undefined }}
+					className={`px-3.5 pb-3 ${connected || error ? "border-t border-[hsl(var(--elev-border)/0.6)]" : ""}`}
 				>
 					<p className="pt-2.5 text-xs text-destructive">{error}</p>
 				</div>

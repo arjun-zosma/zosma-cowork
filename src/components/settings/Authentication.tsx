@@ -234,7 +234,7 @@ function AuthRow({
 	if (!supported) return null;
 
 	return (
-		<div className="rounded-lg border border-border overflow-hidden bg-card">
+		<div className="glass overflow-hidden">
 			<div className="px-3.5 py-3">
 				<div className="flex items-center gap-3">
 					<Icon className="w-5 h-5 shrink-0 text-foreground/60" />
@@ -384,7 +384,7 @@ function ApiKeyRow({
 	}, [key, provider, onSaved]);
 
 	return (
-		<div className="rounded-lg border border-border overflow-hidden bg-card">
+		<div className="glass overflow-hidden">
 			{/* Header row — always visible */}
 			<button
 				type="button"

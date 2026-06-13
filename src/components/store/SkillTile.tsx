@@ -49,7 +49,7 @@ export function SkillTile({
 				}
 			}}
 			aria-label={`Open ${skill.displayName}`}
-			className="group relative flex flex-col gap-2.5 p-3.5 rounded-2xl border border-border/70 bg-card/40 hover:bg-card hover:border-border hover:shadow-md transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+			className="glass group relative flex flex-col gap-2.5 p-3.5 !rounded-2xl hover:border-primary/30 hover:shadow-md transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
 		>
 			<div className="flex items-start gap-3">
 				<TileAvatar seed={skill.id} label={skill.displayName} className="w-11 h-11 text-base" />
