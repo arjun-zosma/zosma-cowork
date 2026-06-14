@@ -20,11 +20,13 @@ import {
 	Calendar,
 	Check,
 	ChevronDown,
+	Download,
 	FileText,
 	HardDrive,
 	KeyRound,
 	Loader2,
 	Mail,
+	Package,
 	Presentation,
 	ShieldAlert,
 	Table2,
@@ -68,6 +70,12 @@ interface GoogleStatus {
 		gmailSettings: { present: boolean };
 		gmailTokens: { present: boolean; path: string };
 	};
+}
+
+interface AppExtStatus {
+	requirements: { pkg: string; label: string; installed: boolean }[];
+	missing: string[];
+	allInstalled: boolean;
 }
 
 const PRODUCT_CONFIG: {
@@ -155,6 +163,10 @@ export function GoogleIntegration() {
 	const [byoSecret, setByoSecret] = useState("");
 	const [byoConfigured, setByoConfigured] = useState(false);
 
+	// App-extension install gating
+	const [appStatus, setAppStatus] = useState<AppExtStatus | null>(null);
+	const [installing, setInstalling] = useState(false);
+
 	// ── Refresh status from sidecar ─────────────────────────────────
 	const refreshStatus = useCallback(async () => {
 		try {
@@ -180,10 +192,24 @@ export function GoogleIntegration() {
 		}
 	}, []);
 
+	const refreshAppStatus = useCallback(async (p: ScopePrefs) => {
+		try {
+			const data = await invoke<AppExtStatus>("google_get_app_status", { prefs: p });
+			setAppStatus(data);
+		} catch {
+			// non-fatal
+		}
+	}, []);
+
 	useEffect(() => {
 		refreshStatus();
 		loadPrefs();
 	}, [refreshStatus, loadPrefs]);
+
+	// Recompute which extensions the current selection needs whenever it changes.
+	useEffect(() => {
+		refreshAppStatus(prefs);
+	}, [prefs, refreshAppStatus]);
 
 	// ── OAuth events (shared with AuthRow, filtered by provider="google") ──
 	useEffect(() => {
@@ -271,6 +297,21 @@ export function GoogleIntegration() {
 		}
 	}, [refreshStatus, loadPrefs]);
 
+	// Install the app's missing pi extensions, then re-check.
+	const handleInstall = useCallback(async () => {
+		setError(null);
+		setInstalling(true);
+		try {
+			const data = await invoke<AppExtStatus>("google_install_app", { prefs });
+			setAppStatus(data);
+			refreshStatus();
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+		} finally {
+			setInstalling(false);
+		}
+	}, [prefs, refreshStatus]);
+
 	// ── Derived ─────────────────────────────────────────────────────
 	const connected = status?.connected ?? false;
 	const granted = status?.granted ?? ({} as Record<GoogleProduct, string>);
@@ -282,6 +323,9 @@ export function GoogleIntegration() {
 		[connected, prefs, status],
 	);
 	const byoNeedsCreds = useByo && !byoConfigured && (!byoId.trim() || !byoSecret.trim());
+	// Auth is gated on the selection's extensions being installed (Calendar is
+	// built-in so a calendar-only selection needs none → allInstalled true).
+	const needsInstall = !connected && appStatus !== null && !appStatus.allInstalled;
 
 	const setProduct = (product: GoogleProduct, capId: string) =>
 		setPrefs((p) => ({ ...p, [product]: capId }));
@@ -326,6 +370,21 @@ export function GoogleIntegration() {
 							{phase === "waiting_browser" && "Waiting for consent…"}
 							{phase === "exchanging" && "Exchanging tokens…"}
 						</div>
+					) : installing ? (
+						<div className="flex items-center gap-1.5 text-[11px] px-2.5 py-1.5 rounded-md border border-border text-muted-foreground">
+							<Loader2 className="w-3 h-3 animate-spin" />
+							Installing extensions…
+						</div>
+					) : needsInstall ? (
+						<button
+							type="button"
+							onClick={handleInstall}
+							className="flex items-center gap-1.5 text-[11px] px-2.5 py-1.5 rounded-md bg-primary/15 border border-primary/30 text-primary hover:bg-primary/20 transition-colors"
+							title="Install the pi extensions this app needs, then connect"
+						>
+							<Download className="w-3 h-3" />
+							Install
+						</button>
 					) : (
 						<button
 							type="button"
@@ -338,6 +397,37 @@ export function GoogleIntegration() {
 					)}
 				</div>
 			</div>
+
+			{/* Not connected — show the app's required extensions + install state */}
+			{!connected && appStatus && appStatus.requirements.length > 0 && (
+				<div className="px-3.5 pb-3 pt-0 border-t border-elev-border/60">
+					<p className="pt-2.5 text-[10px] text-muted-foreground mb-1.5">
+						{needsInstall
+							? "Install these extensions to enable this app:"
+							: "Powered by these installed extensions:"}
+					</p>
+					<div className="flex flex-wrap gap-1.5">
+						{appStatus.requirements.map((req) => (
+							<span
+								key={req.pkg}
+								className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border ${
+									req.installed
+										? "bg-primary/10 text-primary border-primary/15"
+										: "bg-muted/30 text-muted-foreground border-border"
+								}`}
+								title={req.pkg}
+							>
+								{req.installed ? (
+									<Check className="w-2.5 h-2.5" />
+								) : (
+									<Package className="w-2.5 h-2.5 opacity-60" />
+								)}
+								{req.label}
+							</span>
+						))}
+					</div>
+				</div>
+			)}
 
 			{/* Connected — show per-product GRANTED capability */}
 			{connected && (
