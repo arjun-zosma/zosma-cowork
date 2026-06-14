@@ -65,6 +65,26 @@ if (antigravitySecret) {
 	console.warn("[prebuild]   no ANTIGRAVITY_CLIENT_SECRET — Gemini (Google) sign-in disabled");
 }
 
+// Inject the Zosma Google OAuth config. These are PUBLIC values (the Web
+// client_id and the broker's HTTPS URL) — NO secret is ever baked, because the
+// secret lives only in the backend broker. Source ships STAGING defaults, so a
+// build with neither env var set still works against staging; a prod release
+// sets ZOSMA_GOOGLE_CLIENT_ID / ZOSMA_OAUTH_BROKER_URL to override.
+console.log("[prebuild] Injecting Zosma Google OAuth config (public)...");
+for (const [token, envName] of [
+	["__ZOSMA_GOOGLE_CLIENT_ID__", "ZOSMA_GOOGLE_CLIENT_ID"],
+	["__ZOSMA_OAUTH_BROKER_URL__", "ZOSMA_OAUTH_BROKER_URL"],
+]) {
+	const val = (process.env[envName] || "").trim();
+	if (val) {
+		code = code.split(token).join(val);
+		console.log(`[prebuild]   baked ${envName}`);
+	} else {
+		console.log(`[prebuild]   ${envName} unset — using committed staging default`);
+	}
+}
+writeFileSync(bundlePath, code, "utf-8");
+
 // Copy bundled file into src-tauri/ for Tauri resource bundling
 const targetDir = join(root, "src-tauri", "agent-sidecar");
 mkdirSync(targetDir, { recursive: true });

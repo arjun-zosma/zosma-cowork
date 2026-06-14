@@ -34,7 +34,10 @@ export type OAuthTokens = {
 
 export type AuthConfig = {
 	clientId: string;
-	clientSecret: string;
+	/** Empty when refresh is delegated to the Zosma broker (no local secret). */
+	clientSecret?: string;
+	/** Backend broker base URL; when present, refresh goes through it. */
+	brokerUrl?: string;
 	redirectUri?: string;
 	tokens: OAuthTokens;
 };
@@ -49,9 +52,10 @@ export async function readConfig(): Promise<AuthConfig | null> {
 	try {
 		const raw = await readFile(CONFIG_PATH, "utf-8");
 		const parsed = JSON.parse(raw) as AuthConfig;
-		if (!parsed?.clientId || !parsed?.clientSecret || !parsed?.tokens?.access_token) {
-			return null;
-		}
+		// A broker-based connect has NO clientSecret (refresh via brokerUrl); a
+		// legacy connect has a clientSecret. Require one of the two to be usable.
+		if (!parsed?.clientId || !parsed?.tokens?.access_token) return null;
+		if (!parsed.clientSecret && !parsed.brokerUrl) return null;
 		return parsed;
 	} catch {
 		return null;
@@ -83,19 +87,27 @@ async function refreshToken(config: AuthConfig, signal?: AbortSignal): Promise<A
 		);
 	}
 
-	const body = new URLSearchParams({
-		client_id: config.clientId,
-		client_secret: config.clientSecret,
-		refresh_token: config.tokens.refresh_token,
-		grant_type: "refresh_token",
-	});
-
-	const res = await fetch("https://oauth2.googleapis.com/token", {
-		method: "POST",
-		headers: { "Content-Type": "application/x-www-form-urlencoded" },
-		body,
-		signal,
-	});
+	// Preferred path: delegate to the Zosma broker, which holds the secret. Only
+	// fall back to a direct (secret-bearing) refresh for legacy on-disk configs.
+	const useBroker = Boolean(config.brokerUrl) && !config.clientSecret;
+	const res = useBroker
+		? await fetch(`${config.brokerUrl!.replace(/\/+$/, "")}/refresh`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json", Accept: "application/json" },
+				body: JSON.stringify({ refresh_token: config.tokens.refresh_token }),
+				signal,
+			})
+		: await fetch("https://oauth2.googleapis.com/token", {
+				method: "POST",
+				headers: { "Content-Type": "application/x-www-form-urlencoded" },
+				body: new URLSearchParams({
+					client_id: config.clientId,
+					client_secret: config.clientSecret ?? "",
+					refresh_token: config.tokens.refresh_token,
+					grant_type: "refresh_token",
+				}),
+				signal,
+			});
 
 	const text = await res.text();
 	const data = parseJson(text);

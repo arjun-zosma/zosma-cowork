@@ -2386,7 +2386,7 @@ async function main() {
 							type: "error",
 							id: cmd.id,
 							message:
-								"Zosma Google OAuth client not configured. Set ZOSMA_GOOGLE_CLIENT_ID and ZOSMA_GOOGLE_CLIENT_SECRET.",
+								"Zosma Google OAuth client not configured. Set ZOSMA_GOOGLE_CLIENT_ID (public; broker holds the secret).",
 						});
 						break;
 					}

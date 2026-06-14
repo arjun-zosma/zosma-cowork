@@ -34,7 +34,7 @@ afterEach(() => {
 	rmSync(agentDir, { recursive: true, force: true });
 });
 
-const client = { clientId: "zosma-id", clientSecret: "zosma-secret" };
+const client = { clientId: "zosma-id", clientSecret: "zosma-secret", brokerUrl: "" };
 const tokens = {
 	access_token: "at-1",
 	refresh_token: "rt-1",

@@ -1,0 +1,8 @@
+node_modules/
+.env
+.env.*
+*.local
+*.log
+src/
+tsconfig.json
+package-lock.json

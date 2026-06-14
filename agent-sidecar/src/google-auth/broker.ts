@@ -52,27 +52,68 @@ export const IDENTITY_SCOPES = ["openid", "email", "profile"] as const;
 /** Full union scope list (products + identity). */
 export const UNION_SCOPES: string[] = [...Object.values(GOOGLE_SCOPES), ...IDENTITY_SCOPES];
 
-// ── Embedded Zosma OAuth client ─────────────────────────────────
-// Supplied at build/runtime via env so no secret is committed. Ship the OAuth
-// app in Google "Testing" mode (allowlisted users) for internal builds; full
-// verification is a release blocker for the restricted gmail.modify / drive
-// scopes. Both id AND secret are needed because the curated packages refresh
-// the access token themselves using client_secret (installed-app flow).
+// ── Embedded Zosma OAuth client + token broker ──────────────────
+// The device ships ONLY the PUBLIC client_id and the broker URL — never a
+// secret (anything in a desktop bundle is extractable). The Web-application
+// client SECRET lives only in the backend broker (Secret Manager); consent code
+// exchange and token refresh are done by POSTing to the broker, which adds the
+// secret server-side. See services/oauth-broker/.
+//
+// `clientSecret` remains here only for BACKWARD COMPAT with any legacy on-disk
+// config that still carries one (direct-refresh fallback); new connects leave
+// it empty and route everything through the broker.
+
+// Both of these are PUBLIC by design (the client_id is visible in every consent
+// URL; the broker URL is a public HTTPS endpoint). They are safe to commit and
+// to ship in the desktop bundle. The SECRET never lives here — it stays in the
+// broker (Secret Manager). Defaults point at STAGING; a prod release overrides
+// them via the build-time bake below (scripts/prebuild.mjs) or env.
+/** Default deployed staging broker. Override with ZOSMA_OAUTH_BROKER_URL. */
+export const DEFAULT_BROKER_URL = "https://broker-uoux53xara-uc.a.run.app";
+/** Default (staging) public Web client id. Override with ZOSMA_GOOGLE_CLIENT_ID. */
+export const DEFAULT_CLIENT_ID =
+	"830231223031-pukjd742a01uau7oekvrs231fb737eo0.apps.googleusercontent.com";
+
+// Build-time bake slots. scripts/prebuild.mjs replaces these literals with the
+// matching env var's value at `tauri build` time when set (so a packaged app
+// launched from its icon — which has no shell env — still gets the right values).
+// Left unreplaced (still starting with "__ZOSMA_") they are ignored.
+const BAKED_CLIENT_ID = "__ZOSMA_GOOGLE_CLIENT_ID__";
+const BAKED_BROKER_URL = "__ZOSMA_OAUTH_BROKER_URL__";
+const unbaked = (v: string): string => (v.startsWith("__ZOSMA_") ? "" : v.trim());
+
+/** Resolved broker base URL (env → baked → staging default; slashes trimmed). */
+export function brokerUrl(): string {
+	const raw =
+		process.env.ZOSMA_OAUTH_BROKER_URL?.trim() || unbaked(BAKED_BROKER_URL) || DEFAULT_BROKER_URL;
+	return raw.replace(/\/+$/, "");
+}
+
+/** Resolved public client id (env → baked → staging default). */
+export function resolveClientId(): string {
+	return process.env.ZOSMA_GOOGLE_CLIENT_ID?.trim() || unbaked(BAKED_CLIENT_ID) || DEFAULT_CLIENT_ID;
+}
+
 export interface EmbeddedClient {
 	clientId: string;
+	/** Empty for broker-based connects; only set for legacy direct flows. */
 	clientSecret: string;
+	/** Backend broker base URL that custodies the secret. */
+	brokerUrl: string;
 }
 
 export function embeddedClient(): EmbeddedClient {
 	return {
-		clientId: process.env.ZOSMA_GOOGLE_CLIENT_ID ?? "",
+		clientId: resolveClientId(),
 		clientSecret: process.env.ZOSMA_GOOGLE_CLIENT_SECRET ?? "",
+		brokerUrl: brokerUrl(),
 	};
 }
 
+/** Ready to connect when we have the public client_id + a broker URL. */
 export function hasEmbeddedClient(): boolean {
 	const c = embeddedClient();
-	return Boolean(c.clientId && c.clientSecret);
+	return Boolean(c.clientId && c.brokerUrl);
 }
 
 // ── Config destinations (path-injectable for tests) ─────────────
@@ -118,7 +159,10 @@ interface WorkspaceTokens {
 
 interface WorkspaceConfig {
 	clientId: string;
+	/** Empty when refresh is delegated to the broker (preferred). */
 	clientSecret: string;
+	/** Broker base URL used to refresh without a local secret. */
+	brokerUrl?: string;
 	redirectUri?: string;
 	tokens: WorkspaceTokens;
 }
@@ -185,7 +229,9 @@ export function fanOutCredentials(paths: GooglePaths, input: FanOutInput): void 
 	const prevWs = readJson<WorkspaceConfig>(paths.workspaceOAuth);
 	const wsConfig: WorkspaceConfig = {
 		clientId: input.client.clientId,
+		// Broker connects ship NO secret to disk; refresh goes via brokerUrl.
 		clientSecret: input.client.clientSecret,
+		brokerUrl: input.client.brokerUrl,
 		redirectUri: input.redirectUri,
 		tokens: {
 			access_token: input.tokens.access_token,
@@ -337,7 +383,8 @@ export function migrateLegacyTokens(paths: GooglePaths): MigrationResult {
 	const expiry = legacy.tokens.expiry_date ?? Date.now() + 3600_000;
 
 	fanOutCredentials(paths, {
-		client: { clientId: legacy.clientId, clientSecret: legacy.clientSecret },
+		// Legacy configs carry a real secret + no broker → keep direct refresh.
+		client: { clientId: legacy.clientId, clientSecret: legacy.clientSecret, brokerUrl: "" },
 		tokens: {
 			access_token: legacy.tokens.access_token,
 			refresh_token: legacy.tokens.refresh_token,
