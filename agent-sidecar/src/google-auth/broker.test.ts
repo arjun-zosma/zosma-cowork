@@ -5,12 +5,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	defaultGooglePaths,
 	disconnectGoogle,
+	embeddedClient,
 	fanOutCredentials,
 	type GooglePaths,
 	googleStatus,
 	migrateLegacyTokens,
 	UNION_SCOPES,
 } from "./broker.js";
+import {
+	defaultCoworkGooglePaths,
+	writeByoClient,
+	writeScopePrefs,
+} from "./prefs-store.js";
+import { DEFAULT_PREFS } from "./scopes.js";
 
 let agentDir: string;
 let paths: GooglePaths;
@@ -186,6 +193,21 @@ describe("fanOutCredentials", () => {
 	});
 });
 
+describe("embeddedClient BYO precedence", () => {
+	it("uses a bring-your-own client (id+secret, direct refresh — no broker)", () => {
+		const c = embeddedClient({ clientId: "byo-id", clientSecret: "byo-secret" });
+		expect(c.clientId).toBe("byo-id");
+		expect(c.clientSecret).toBe("byo-secret");
+		expect(c.brokerUrl).toBe(""); // BYO holds the secret → direct, no broker
+	});
+
+	it("falls back to the Zosma embedded client (brokered) when no BYO", () => {
+		const c = embeddedClient();
+		expect(c.clientId).toBeTruthy();
+		expect(c.brokerUrl).toBeTruthy(); // brokered flow
+	});
+});
+
 describe("googleStatus", () => {
 	it("reports disconnected when no files exist", () => {
 		const s = googleStatus(paths);
@@ -211,6 +233,36 @@ describe("googleStatus", () => {
 		expect(s.destinations.workspaceOAuth.present).toBe(true);
 		expect(s.destinations.gmailSettings.present).toBe(true);
 		expect(s.destinations.gmailTokens.present).toBe(true);
+	});
+
+	it("reports granted capability per product (granted-vs-requested diff)", () => {
+		fanOutCredentials(paths, { client, tokens, email: "u@example.com", redirectUri: "r", now: NOW });
+		const s = googleStatus(paths);
+		expect(s.granted.gmail).toBe("modify");
+		expect(s.granted.calendar).toBe("full");
+		expect(s.granted.drive).toBe("full");
+	});
+
+	it("is connected on a gmail-only token even without workspace oauth.json", () => {
+		fanOutCredentials(paths, {
+			client,
+			tokens: { ...tokens, scope: "openid email https://www.googleapis.com/auth/gmail.modify" },
+			email: "u@example.com",
+			redirectUri: "r",
+			now: NOW,
+			prefs: {
+				drive: "off",
+				gmail: "modify",
+				calendar: "off",
+				docs: "off",
+				sheets: "off",
+				slides: "off",
+			},
+		});
+		const s = googleStatus(paths);
+		expect(s.destinations.workspaceOAuth.present).toBe(false);
+		expect(s.connected).toBe(true); // gmail tokens alone count as connected
+		expect(s.granted.gmail).toBe("modify");
 	});
 });
 
@@ -244,6 +296,17 @@ describe("disconnectGoogle", () => {
 		const res = await disconnectGoogle(paths, revoke);
 		expect(revoke).not.toHaveBeenCalled();
 		expect(res.removed).toEqual([]);
+	});
+
+	it("also clears Cowork scope-prefs + BYO files when cowork paths given", async () => {
+		fanOutCredentials(paths, { client, tokens, email: "u@example.com", redirectUri: "r", now: NOW });
+		const cowork = defaultCoworkGooglePaths(join(agentDir, "zosmaai"));
+		writeScopePrefs(cowork, DEFAULT_PREFS);
+		writeByoClient(cowork, { clientId: "id", clientSecret: "s" });
+		const res = await disconnectGoogle(paths, vi.fn(() => Promise.resolve()), cowork);
+		expect(existsSync(cowork.scopePrefs)).toBe(false);
+		expect(existsSync(cowork.byoClient)).toBe(false);
+		expect(res.removed).toContain(cowork.scopePrefs);
 	});
 });
 

@@ -32,7 +32,19 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { PRODUCTS, type ScopePrefs } from "./scopes.js";
+import {
+	grantedCapabilities,
+	PRODUCTS,
+	type ScopePrefs,
+	type ScopeTier,
+	tierOf,
+} from "./scopes.js";
+import {
+	clearGooglePrefs,
+	type CoworkGooglePaths,
+	readByoClient,
+	readScopePrefs,
+} from "./prefs-store.js";
 
 // ── Union scopes requested at consent ───────────────────────────
 // gmail.modify + calendar + drive + documents + spreadsheets + presentations,
@@ -103,7 +115,23 @@ export interface EmbeddedClient {
 	brokerUrl: string;
 }
 
-export function embeddedClient(): EmbeddedClient {
+/** A user-supplied OAuth client (bring-your-own). */
+export interface ByoClientInput {
+	clientId: string;
+	clientSecret: string;
+}
+
+/**
+ * Resolve the OAuth client to use, in precedence order:
+ *   1. bring-your-own client (id+secret) — the device holds the secret, so
+ *      refresh/exchange go DIRECT to Google (brokerUrl cleared, no Zosma broker).
+ *   2. env `ZOSMA_GOOGLE_CLIENT_ID`/`_SECRET` + the resolved broker URL.
+ *   3. build-baked Zosma public client + broker (the default brokered flow).
+ */
+export function embeddedClient(byo?: ByoClientInput | null): EmbeddedClient {
+	if (byo?.clientId && byo?.clientSecret) {
+		return { clientId: byo.clientId, clientSecret: byo.clientSecret, brokerUrl: "" };
+	}
 	return {
 		clientId: resolveClientId(),
 		clientSecret: process.env.ZOSMA_GOOGLE_CLIENT_SECRET ?? "",
@@ -317,7 +345,16 @@ export interface GoogleStatus {
 	connected: boolean;
 	email: string | null;
 	scopes: string[];
+	/** per-product: is ANY scope for it granted (legacy boolean view). */
 	products: Record<GoogleProduct, boolean>;
+	/** per-product GRANTED capability id (off|read|…) — the diff target. */
+	granted: Record<GoogleProduct, string>;
+	/** the saved selection the user REQUESTED (from Cowork prefs), if available. */
+	requested?: ScopePrefs;
+	/** most severe tier of the requested selection (UI warning), if available. */
+	requestedTier?: ScopeTier | null;
+	/** true when connected via a bring-your-own OAuth client. */
+	byo: boolean;
 	destinations: {
 		workspaceOAuth: { present: boolean; path: string };
 		gmailSettings: { present: boolean };
@@ -333,22 +370,38 @@ function productsFromScope(scope: string): Record<GoogleProduct, boolean> {
 	return out;
 }
 
-/** Read both destinations and report what's connected + which scopes/products. */
-export function googleStatus(paths: GooglePaths): GoogleStatus {
+/**
+ * Read all destinations and report connected state + granted/requested scopes.
+ * When `cowork` paths are supplied we also surface the saved REQUESTED selection
+ * and whether a bring-your-own client is configured (for the granted-vs-
+ * requested status UI).
+ */
+export function googleStatus(paths: GooglePaths, cowork?: CoworkGooglePaths): GoogleStatus {
 	const ws = readJson<WorkspaceConfig>(paths.workspaceOAuth);
 	const gmailTokens = readJson<GmailTokens>(paths.gmailTokens);
 	const settings = readJson<Record<string, unknown>>(paths.piSettings) ?? {};
 	const gmailSettings = settings["pi-gmail"] as Record<string, unknown> | undefined;
 
-	const connected = Boolean(ws?.clientId && ws?.tokens?.access_token);
+	// Connected if EITHER destination carries an access token (gmail-only connects
+	// skip the workspace oauth.json, and vice versa).
+	const connected = Boolean(
+		(ws?.clientId && ws?.tokens?.access_token) || gmailTokens?.access_token,
+	);
 	const scopeStr = ws?.tokens?.scope ?? gmailTokens?.scope ?? "";
 	const scopes = scopeStr ? scopeStr.split(/\s+/).filter(Boolean) : [];
+
+	const requested = cowork ? readScopePrefs(cowork) : undefined;
+	const byo = cowork ? Boolean(readByoClient(cowork)) : false;
 
 	return {
 		connected,
 		email: gmailTokens?.email ?? null,
 		scopes,
 		products: productsFromScope(scopeStr),
+		granted: grantedCapabilities(scopeStr),
+		requested,
+		requestedTier: requested ? tierOf(requested) : undefined,
+		byo,
 		destinations: {
 			workspaceOAuth: { present: Boolean(ws), path: paths.workspaceOAuth },
 			gmailSettings: { present: Boolean(gmailSettings?.clientId) },
@@ -371,6 +424,7 @@ export interface DisconnectResult {
 export async function disconnectGoogle(
 	paths: GooglePaths,
 	revoke: (refreshToken: string) => Promise<void> = revokeAtGoogle,
+	cowork?: CoworkGooglePaths,
 ): Promise<DisconnectResult> {
 	const ws = readJson<WorkspaceConfig>(paths.workspaceOAuth);
 	const gmailTokens = readJson<GmailTokens>(paths.gmailTokens);
@@ -389,6 +443,8 @@ export async function disconnectGoogle(
 	const removed: string[] = [];
 	if (removeIfExists(paths.workspaceOAuth)) removed.push(paths.workspaceOAuth);
 	if (removeIfExists(paths.gmailTokens)) removed.push(paths.gmailTokens);
+	// Clear the Cowork-local consent inputs too (scope prefs + BYO client).
+	if (cowork) removed.push(...clearGooglePrefs(cowork));
 
 	return { revoked, removed };
 }
