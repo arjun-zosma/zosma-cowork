@@ -5,20 +5,21 @@
   "private": true,
   "main": "lib/index.js",
   "engines": {
-    "node": "20"
+    "node": "22"
   },
   "scripts": {
     "build": "tsc",
     "build:watch": "tsc --watch",
-    "serve": "npm run build && firebase emulators:start --only functions",
-    "deploy": "firebase deploy --only functions",
-    "logs": "firebase functions:log"
+    "start": "functions-framework --target=broker --source=lib",
+    "serve": "npm run build && functions-framework --target=broker --source=lib"
   },
   "dependencies": {
-    "express": "^4.21.2",
-    "firebase-functions": "^6.1.1"
+    "@google-cloud/functions-framework": "^3.4.5",
+    "express": "^4.21.2"
   },
   "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.10.2",
     "typescript": "^5.7.2"
   }
 }

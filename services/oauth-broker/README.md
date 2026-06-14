@@ -36,57 +36,69 @@ Stateless, scales horizontally, custodies nothing. Public endpoints are safe: a
 caller can only finish an exchange for a code/refresh_token they already hold
 (and `/token` also needs the matching PKCE verifier).
 
-## Config
+## Config (runtime env)
 
-| Name                          | Where                | Secret? |
-|-------------------------------|----------------------|---------|
-| `GOOGLE_OAUTH_CLIENT_ID`      | `functions/.env`     | No (public) |
-| `GOOGLE_OAUTH_CLIENT_SECRET`  | Google Secret Manager| **Yes** |
-| `BROKER_REGION` (opt)         | `functions/.env`     | No |
+| Name                          | Where                     | Secret? |
+|-------------------------------|---------------------------|---------|
+| `GOOGLE_OAUTH_CLIENT_ID`      | deploy `--set-env-vars`   | No (public) |
+| `GOOGLE_OAUTH_CLIENT_SECRET`  | Google Secret Manager (`--set-secrets`) | **Yes** |
 
 One deployment **per environment** (12-factor). Staging uses the
 "Zosma Cowork Staging" Web client; prod gets its own Web client + its own deploy.
 
-## Deploy (staging)
+## Deployed (staging)
 
-Prereqs: Firebase **Blaze** plan on `keen-wavelet-461720-h0`, and the
-`firebase` CLI authenticated.
-
-```bash
-cd services/oauth-broker
-cp functions/.env.example functions/.env     # staging client_id is prefilled
-cd functions && npm install && npm run build && cd ..
-
-# Store the secret (reads from the downloaded client JSON; value never printed):
-firebase functions:secrets:set GOOGLE_OAUTH_CLIENT_SECRET --project keen-wavelet-461720-h0 \
-  --data-file <(jq -r '.web.client_secret' ~/Downloads/client_secret_830231223031-pukjd742*.json)
-
-firebase deploy --only functions:oauth-broker --project keen-wavelet-461720-h0
-```
-
-After deploy, the broker base URL is:
-
-```
-https://us-central1-keen-wavelet-461720-h0.cloudfunctions.net/broker
-```
+| | |
+|---|---|
+| Project | `keen-wavelet-461720-h0` (Reva) |
+| Region | `us-central1` |
+| Service | Cloud Functions gen2 / Cloud Run `broker` |
+| **Base URL** | `https://broker-uoux53xara-uc.a.run.app` |
+| **Redirect URI to register** | `https://broker-uoux53xara-uc.a.run.app/callback` |
+| Web client | `830231223031-pukjd742…` (Zosma Cowork Staging) |
 
 ### Register the redirect URI (one-time, Google Console)
 
 In the **Zosma Cowork Staging** OAuth client → *Authorised redirect URIs* → add:
 
 ```
-https://us-central1-keen-wavelet-461720-h0.cloudfunctions.net/broker/callback
+https://broker-uoux53xara-uc.a.run.app/callback
 ```
 
-## Local dev (emulator)
+## Deploy / redeploy
+
+Deployed via **gcloud** (not Firebase). `./deploy.sh` captures the exact working
+sequence; deploy from an isolated, precompiled copy (the monorepo buildpack
+otherwise picks up the root `package.json`).
+
+```bash
+cd services/oauth-broker
+GOOGLE_OAUTH_CLIENT_ID=830231223031-pukjd742a01uau7oekvrs231fb737eo0.apps.googleusercontent.com \
+CLIENT_SECRET_FILE=~/Downloads/client_secret_830231223031-pukjd742*.json \
+./deploy.sh
+```
+
+One-time project gotchas this script / setup handles (gen2 specifics):
+
+1. The gen2 **build runs as the default compute SA** — it needs
+   `roles/cloudbuild.builds.builder` (logging + Artifact Registry). Missing this
+   = builds fail with "An unexpected error occurred" and **no logs**.
+2. The compute SA needs `roles/secretmanager.secretAccessor` on the secret.
+3. Public access (`allUsers` invoker) requires the org policy
+   `iam.allowedPolicyMemberDomains` to permit it — if your org enforces Domain
+   Restricted Sharing, set a **project-level** override `allowAll: true`.
+4. Deploy from an **isolated** precompiled dir + `GOOGLE_NODE_RUN_SCRIPTS=`.
+
+## Local dev
 
 ```bash
 cd services/oauth-broker/functions
-npm run serve   # firebase emulators:start --only functions
+npm install && npm run build
+GOOGLE_OAUTH_CLIENT_ID=… GOOGLE_OAUTH_CLIENT_SECRET=… npm start   # functions-framework on :8080
 ```
 
-The app points at the broker via `ZOSMA_OAUTH_BROKER_URL` (see the client-side
-wiring in `agent-sidecar/src/google-auth/`).
+The app points at the broker via `ZOSMA_OAUTH_BROKER_URL` (client-side wiring in
+`agent-sidecar/src/google-auth/`, next PR).
 
 ## Security notes
 

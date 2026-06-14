@@ -21,15 +21,15 @@
  * for a code/refresh_token they already legitimately hold (and, for /token, only
  * with the matching PKCE verifier). The broker just adds the secret.
  */
-import { onRequest } from "firebase-functions/v2/https";
-import { defineSecret, defineString } from "firebase-functions/params";
-import * as logger from "firebase-functions/logger";
+import { http } from "@google-cloud/functions-framework";
 import express, { type Request, type Response } from "express";
 
-const GOOGLE_CLIENT_ID = defineString("GOOGLE_OAUTH_CLIENT_ID");
-const GOOGLE_CLIENT_SECRET = defineSecret("GOOGLE_OAUTH_CLIENT_SECRET");
+// Config from the runtime environment. The client_id is public; the secret is
+// mounted from Google Secret Manager (gcloud --set-secrets). Reading lazily per
+// request keeps cold-start cheap and lets Secret Manager rotation take effect.
+const clientId = (): string => process.env.GOOGLE_OAUTH_CLIENT_ID ?? "";
+const clientSecret = (): string => process.env.GOOGLE_OAUTH_CLIENT_SECRET ?? "";
 
-const REGION = process.env.BROKER_REGION || "us-central1";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const EXCHANGE_TIMEOUT_MS = 15_000;
 
@@ -146,17 +146,17 @@ app.post("/token", async (req: Request, res: Response) => {
 			code,
 			code_verifier,
 			redirect_uri,
-			client_id: GOOGLE_CLIENT_ID.value(),
-			client_secret: GOOGLE_CLIENT_SECRET.value(),
+			client_id: clientId(),
+			client_secret: clientSecret(),
 		});
 		if (status !== 200 || !data.access_token) {
-			logger.warn("token exchange failed", { status, error: data.error });
+			console.warn(`token exchange failed status=${status} error=${data.error ?? ""}`);
 			res.status(status === 200 ? 502 : status).json({ error: data.error ?? "token_exchange_failed", error_description: data.error_description });
 			return;
 		}
 		res.json(tokenPayload(data));
 	} catch (e) {
-		logger.error("token exchange error", { message: (e as Error).message });
+		console.error(`token exchange error: ${(e as Error).message}`);
 		res.status(504).json({ error: "upstream_unavailable" });
 	}
 });
@@ -172,18 +172,18 @@ app.post("/refresh", async (req: Request, res: Response) => {
 		const { status, data } = await googleToken({
 			grant_type: "refresh_token",
 			refresh_token,
-			client_id: GOOGLE_CLIENT_ID.value(),
-			client_secret: GOOGLE_CLIENT_SECRET.value(),
+			client_id: clientId(),
+			client_secret: clientSecret(),
 		});
 		if (status !== 200 || !data.access_token) {
-			logger.warn("refresh failed", { status, error: data.error });
+			console.warn(`refresh failed status=${status} error=${data.error ?? ""}`);
 			res.status(status === 200 ? 502 : status).json({ error: data.error ?? "refresh_failed", error_description: data.error_description });
 			return;
 		}
 		// Google does not return a refresh_token on refresh; pass through the rest.
 		res.json(tokenPayload(data));
 	} catch (e) {
-		logger.error("refresh error", { message: (e as Error).message });
+		console.error(`refresh error: ${(e as Error).message}`);
 		res.status(504).json({ error: "upstream_unavailable" });
 	}
 });
@@ -192,15 +192,6 @@ app.use((_req: Request, res: Response) => {
 	res.status(404).json({ error: "not_found" });
 });
 
-export const broker = onRequest(
-	{
-		region: REGION,
-		secrets: [GOOGLE_CLIENT_SECRET],
-		cors: true,
-		maxInstances: 20,
-		timeoutSeconds: 30,
-		memory: "256MiB",
-		concurrency: 80,
-	},
-	app,
-);
+// Register the Express app as the HTTP function entry point `broker`.
+// Scaling/secret/region knobs are set at deploy time (gcloud functions deploy).
+http("broker", app);
