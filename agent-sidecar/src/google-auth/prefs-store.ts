@@ -114,3 +114,8 @@ export function clearGooglePrefs(paths: CoworkGooglePaths): string[] {
 	if (removeIfExists(paths.byoClient)) removed.push(paths.byoClient);
 	return removed;
 }
+
+/** Clear only the BYO client (revert to the Zosma client); keep scope prefs. */
+export function clearByoOnly(paths: CoworkGooglePaths): boolean {
+	return removeIfExists(paths.byoClient);
+}
