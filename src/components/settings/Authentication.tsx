@@ -13,11 +13,19 @@ interface Props {
 }
 type Phase = "idle" | "starting" | "waiting_browser" | "exchanging" | "done";
 
+// Gemini (Google / Antigravity) sign-in is fully integrated in the sidecar
+// (registerGeminiAntigravity) but hidden from the provider list for now while
+// the subscription/ToS story is settled. Flip to true to re-expose the option;
+// no other change is needed.
+const SHOW_ANTIGRAVITY = false;
+
 const PROVIDERS_CONFIG = [
 	{ id: "anthropic", label: "Claude Pro/Max", icon: ClaudeIcon },
 	{ id: "github-copilot", label: "GitHub Copilot", icon: GitHubIcon },
 	{ id: "openai-codex", label: "ChatGPT", icon: OpenAIIcon },
-	{ id: "google-antigravity", label: "Gemini (Google)", icon: GeminiIcon },
+	...(SHOW_ANTIGRAVITY
+		? [{ id: "google-antigravity", label: "Gemini (Google)", icon: GeminiIcon }]
+		: []),
 ];
 
 const ease = [0.16, 1, 0.3, 1] as const;
