@@ -77,6 +77,7 @@ Guidelines:
 
 import {
 	AuthStorage,
+	DefaultPackageManager,
 	DefaultResourceLoader,
 	type ExtensionFactory,
 	type ExtensionUIContext,
@@ -181,6 +182,7 @@ import {
 	type ScopePrefs,
 	tierOf,
 } from "./google-auth/scopes.js";
+import { appExtensionStatus } from "./google-auth/app-requirements.js";
 // Loads pi's disk/npm/git extensions via virtualModules-backed jiti so they
 // work in the bundled sidecar (no node_modules beside it). See #147.
 import {
@@ -365,6 +367,20 @@ interface DisconnectGoogleCommand {
 interface GetGooglePrefsCommand {
 	type: "get_google_prefs";
 	id: string;
+}
+
+/** Report which app extensions the selection needs + whether they're installed. */
+interface GetGoogleAppStatusCommand {
+	type: "get_google_app_status";
+	id: string;
+	prefs?: ScopePrefs;
+}
+
+/** Install (via pi's package manager) any app extensions the selection is missing. */
+interface InstallGoogleAppCommand {
+	type: "install_google_app";
+	id: string;
+	prefs?: ScopePrefs;
 }
 
 /** Persist scope prefs and/or BYO client without (re)running consent. */
@@ -609,6 +625,8 @@ type Command =
 	| DisconnectGoogleCommand
 	| GetGooglePrefsCommand
 	| SaveGooglePrefsCommand
+	| GetGoogleAppStatusCommand
+	| InstallGoogleAppCommand
 	| ReloadCommand
 	| SaveSessionCommand
 	| LoadSessionCommand
@@ -2453,6 +2471,15 @@ async function main() {
 					else if (cmd.byo === null) clearByoOnly(coworkPaths); // explicit revert to Zosma
 					const client = embeddedClient(byo);
 					const scopes = resolveScopes(prefs);
+					// Audit trail: the EXACT scopes we will ask Google for, derived from
+					// the selection — verifies “captured == requested” (#281).
+					log(
+						"Google connect: byo=%s prefs=%o requesting %d scopes: %s",
+						Boolean(byo),
+						prefs,
+						scopes.length,
+						scopes.join(" "),
+					);
 
 					// Fire the async consent flow (non-blocking from the handler's
 					// perspective — the send() for result/error comes from within).
@@ -2622,6 +2649,67 @@ async function main() {
 					} catch (err: unknown) {
 						const errMsg = err instanceof Error ? err.message : String(err);
 						send({ type: "error", id: cmd.id, message: `Failed to save Google prefs: ${errMsg}` });
+					}
+					break;
+				}
+
+				// ── get_google_app_status (#281) ──────────────────────
+				// Which app extensions does the (selected) products need, and are they
+				// installed at pi's path? Gates the Connect/auth step in the UI.
+				case "get_google_app_status": {
+					try {
+						const prefs = cmd.prefs ?? readScopePrefs(defaultCoworkGooglePaths());
+						const status = appExtensionStatus(prefs, readPiPackages(piAgentDir()));
+						send({ type: "result", id: cmd.id, data: status });
+					} catch (err: unknown) {
+						const errMsg = err instanceof Error ? err.message : String(err);
+						send({
+							type: "error",
+							id: cmd.id,
+							message: `Failed to read Google app status: ${errMsg}`,
+						});
+					}
+					break;
+				}
+
+				// ── install_google_app (#281) ─────────────────────
+				// Install (via pi's OWN package manager — no parallel registry, no
+				// `pi` binary dependency) every extension the selection needs but is
+				// missing, then reload so the new extensions are live this session.
+				case "install_google_app": {
+					try {
+						const prefs = cmd.prefs ?? readScopePrefs(defaultCoworkGooglePaths());
+						const before = appExtensionStatus(prefs, readPiPackages(piAgentDir()));
+						if (before.missing.length > 0) {
+							const home = homedir();
+							const agentDir = piAgentDir();
+							const sm = SettingsManager.create(home, agentDir);
+							const pm = new DefaultPackageManager({ cwd: home, agentDir, settingsManager: sm });
+							for (const pkg of before.missing) {
+								send({
+									type: "event",
+									event: {
+										kind: "oauth_progress",
+										provider: "google",
+										message: `Installing ${pkg}…`,
+									},
+								});
+								log("Google app: installing %s via pi package manager", pkg);
+								await pm.installAndPersist(`npm:${pkg}`);
+							}
+							// Reload the agent so newly installed extensions load now.
+							await initAgent(zosmaDir);
+						}
+						const after = appExtensionStatus(prefs, readPiPackages(piAgentDir()));
+						send({ type: "result", id: cmd.id, data: after });
+					} catch (err: unknown) {
+						const errMsg = err instanceof Error ? err.message : String(err);
+						log("install_google_app error: %s", errMsg);
+						send({
+							type: "error",
+							id: cmd.id,
+							message: `Failed to install Google app extensions: ${errMsg}`,
+						});
 					}
 					break;
 				}

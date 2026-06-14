@@ -1067,6 +1067,35 @@ async fn google_save_prefs(
     scmd_r(&s, &payload, std::time::Duration::from_secs(10)).await
 }
 
+/// Google app: which extensions the selection needs + whether they're installed.
+#[tauri::command]
+async fn google_get_app_status(
+    s: State<'_, AppState>,
+    prefs: Option<Value>,
+) -> Result<Value, String> {
+    let id = format!("ggas-{}", uuid_v4());
+    let mut payload = serde_json::json!({"type":"get_google_app_status","id":id});
+    if let Some(p) = prefs {
+        payload["prefs"] = p;
+    }
+    scmd_r(&s, &payload, std::time::Duration::from_secs(15)).await
+}
+
+/// Google app: install (via pi's package manager) any missing app extensions.
+#[tauri::command]
+async fn google_install_app(
+    s: State<'_, AppState>,
+    prefs: Option<Value>,
+) -> Result<Value, String> {
+    let id = format!("gia-{}", uuid_v4());
+    let mut payload = serde_json::json!({"type":"install_google_app","id":id});
+    if let Some(p) = prefs {
+        payload["prefs"] = p;
+    }
+    // npm install over the network — generous timeout.
+    scmd_r(&s, &payload, std::time::Duration::from_secs(300)).await
+}
+
 /// Google broker: probe both token destinations and report connected state.
 #[tauri::command]
 async fn google_get_status(s: State<'_, AppState>) -> Result<Value, String> {
@@ -2203,6 +2232,8 @@ pub fn run() {
             google_disconnect,
             google_get_prefs,
             google_save_prefs,
+            google_get_app_status,
+            google_install_app,
             reload_sidecar,
             list_sessions,
             save_session,
