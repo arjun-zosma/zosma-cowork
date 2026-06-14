@@ -123,16 +123,25 @@ Identity: always openid email profile
 7. Wire `index.ts` handlers + Rust commands (typecheck-driven).
 8. `GoogleIntegration.tsx` Advanced + BYO UI (component, manual verify).
 
-## 7. Acceptance criteria (from #281)
+## 7. Acceptance criteria (from #281) — STATUS
 
-- [ ] Default one-click connect = full access (current behaviour preserved).
-- [ ] Advanced per-product capability selection drives the actual consent scopes.
-- [ ] Granted-vs-requested scopes stored and shown in status UI.
-- [ ] BYO client id/secret supported with documented precedence.
-- [ ] Disconnect revokes + clears all written destinations (+ BYO + prefs).
-- [ ] `fanOutCredentials` only writes destinations for selected products.
-- [ ] Scope prefs + BYO live under `~/.zosmaai/cowork/` (pi-native principle);
+- [x] Default one-click connect = full access (`DEFAULT_PREFS` resolves to exactly
+      today's `UNION_SCOPES`; unit-tested).
+- [x] Advanced per-product capability selection drives the actual consent scopes
+      (`resolveScopes` → `runConsent({ scopes })`).
+- [x] Granted-vs-requested scopes stored and shown in status UI
+      (`grantedCapabilities`, `googleStatus.granted`/`requested`).
+- [x] BYO client id/secret supported with documented precedence
+      (`embeddedClient(byo)`: BYO → env → baked; direct Google exchange).
+- [x] Disconnect revokes + clears all written destinations (+ BYO + prefs).
+- [x] `fanOutCredentials` only writes destinations for selected products.
+- [x] Scope prefs + BYO live under `~/.zosmaai/cowork/` (pi-native principle);
       tokens stay in pi dirs.
+
+All on branch `feat/281-google-workspace-app`. Verification: 41 google-auth
+unit tests + 185 sidecar tests green; `tsc --noEmit` clean (sidecar + frontend);
+`cargo check` clean; esbuild bundle clean; SettingsPage tests green; style
+guardrail ratcheted. **Pending: manual end-to-end consent run + screenshots.**
 
 ## 8. Out of scope
 
