@@ -138,10 +138,47 @@ Identity: always openid email profile
 - [x] Scope prefs + BYO live under `~/.zosmaai/cowork/` (pi-native principle);
       tokens stay in pi dirs.
 
-All on branch `feat/281-google-workspace-app`. Verification: 41 google-auth
-unit tests + 185 sidecar tests green; `tsc --noEmit` clean (sidecar + frontend);
+Plus (added): **app extension install gating** — Connect is gated until the
+selection's required pi extensions are installed; install via pi's own package
+manager; scopes logged for audit ("captured == requested" verified against
+Google's published scope descriptions: default Gmail = `gmail.modify`, NOT the
+full-mailbox scope).
+
+All on branch `feat/281-google-workspace-app`. Verification: 50 google-auth
+unit tests + 194 sidecar tests green; `tsc --noEmit` clean (sidecar + frontend);
 `cargo check` clean; esbuild bundle clean; SettingsPage tests green; style
-guardrail ratcheted. **Pending: manual end-to-end consent run + screenshots.**
+guardrail within baseline; programmatic install validated end-to-end in an
+isolated agent dir. **Pending: manual end-to-end consent run + screenshots.**
+
+## 7a. App = packaged extensions (install gating) — ADDED
+
+An "app" isn't just auth: it must ensure the underlying pi **extensions** are
+installed so the brokered tokens actually power tools. The Connect/auth step is
+now **gated on installation**:
+
+- `app-requirements.ts` maps selected products → required pi extensions:
+  - `gmail` → `@e9n/pi-gmail`
+  - `drive`/`docs`/`sheets`/`slides` → `pi-google-workspace`
+  - `calendar` → **none** (the `google_calendar` extension is built into the
+    sidecar), so a calendar-only selection is trivially "installed".
+- `appExtensionStatus(prefs, readPiPackages())` reports per-extension install
+  state + `allInstalled`. Detection is pi-native: reads pi's `settings.json`
+  `packages` (no parallel registry).
+- Sidecar `get_google_app_status` / `install_google_app` (+ Tauri commands).
+  Install uses pi's **own** `DefaultPackageManager.installAndPersist("npm:<pkg>")`
+  then reloads the agent — no `pi`-binary dependency, no `npm pack` reimpl.
+- UI: when extensions are missing the card shows an **Install** button + a
+  per-extension requirements panel instead of **Connect**; Connect appears only
+  once `allInstalled`. Selection changes re-evaluate requirements live.
+
+**Version-skew note (pre-existing, not introduced here):** the sidecar bundles
+`@earendil-works/pi-coding-agent` **0.74.2**, which installs+resolves user-scope
+npm packages under the **global npm root** (`npm root -g/..`); the standalone
+`pi` CLI is **0.79.3** and uses `~/.pi/agent/npm`. Because the install handler
+uses the sidecar's **bundled** PM for BOTH install and resolve, the two are
+self-consistent (an installed extension loads in Cowork). When the sidecar's pi
+dependency is bumped, the path tracks automatically. Worth aligning the bundled
+version separately.
 
 ## 8. Out of scope
 
