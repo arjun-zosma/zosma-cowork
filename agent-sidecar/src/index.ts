@@ -2450,6 +2450,7 @@ async function main() {
 					// Persist the selection so refresh/reconnect/status reuse it.
 					writeScopePrefs(coworkPaths, prefs);
 					if (cmd.byo) writeByoClient(coworkPaths, cmd.byo);
+					else if (cmd.byo === null) clearByoOnly(coworkPaths); // explicit revert to Zosma
 					const client = embeddedClient(byo);
 					const scopes = resolveScopes(prefs);
 
