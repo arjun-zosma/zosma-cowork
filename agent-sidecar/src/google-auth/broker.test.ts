@@ -105,6 +105,71 @@ describe("fanOutCredentials", () => {
 		});
 	});
 
+	it("skips gmail destinations when Gmail capability is Off", () => {
+		fanOutCredentials(paths, {
+			client,
+			tokens,
+			email: "u@example.com",
+			redirectUri: "r",
+			now: NOW,
+			prefs: {
+				drive: "full",
+				gmail: "off",
+				calendar: "full",
+				docs: "off",
+				sheets: "off",
+				slides: "off",
+			},
+		});
+		expect(existsSync(paths.workspaceOAuth)).toBe(true); // calendar/drive selected
+		expect(existsSync(paths.gmailTokens)).toBe(false); // gmail off
+		// no settings.json written (gmail off, none pre-existing)
+		expect(existsSync(paths.piSettings)).toBe(false);
+	});
+
+	it("removes stale gmail destinations when re-consenting with Gmail now Off", () => {
+		// First connect with everything (default) → gmail files written.
+		fanOutCredentials(paths, { client, tokens, email: "u@example.com", redirectUri: "r", now: NOW });
+		expect(existsSync(paths.gmailTokens)).toBe(true);
+		// Re-consent dropping Gmail.
+		fanOutCredentials(paths, {
+			client,
+			tokens,
+			email: "u@example.com",
+			redirectUri: "r",
+			now: NOW + 1,
+			prefs: {
+				drive: "full",
+				gmail: "off",
+				calendar: "full",
+				docs: "full",
+				sheets: "full",
+				slides: "full",
+			},
+		});
+		expect(existsSync(paths.gmailTokens)).toBe(false);
+	});
+
+	it("skips the workspace oauth.json when all workspace products are Off", () => {
+		fanOutCredentials(paths, {
+			client,
+			tokens,
+			email: "u@example.com",
+			redirectUri: "r",
+			now: NOW,
+			prefs: {
+				drive: "off",
+				gmail: "modify",
+				calendar: "off",
+				docs: "off",
+				sheets: "off",
+				slides: "off",
+			},
+		});
+		expect(existsSync(paths.workspaceOAuth)).toBe(false); // no workspace product
+		expect(existsSync(paths.gmailTokens)).toBe(true); // gmail selected
+	});
+
 	it("preserves a prior refresh_token when Google omits one on re-consent", () => {
 		fanOutCredentials(paths, { client, tokens, email: "u@example.com", redirectUri: "r", now: NOW });
 		// Re-consent without a refresh_token

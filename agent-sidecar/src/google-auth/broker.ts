@@ -32,6 +32,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { PRODUCTS, type ScopePrefs } from "./scopes.js";
 
 // ── Union scopes requested at consent ───────────────────────────
 // gmail.modify + calendar + drive + documents + spreadsheets + presentations,
@@ -212,6 +213,23 @@ export interface FanOutInput {
 	redirectUri: string;
 	/** clock injection for deterministic tests */
 	now?: number;
+	/**
+	 * The capability selection this consent was for. Drives WHICH destinations
+	 * get written: a product that is "off" has its destination skipped (and any
+	 * stale prior file removed). Omitted ⇒ all products selected (legacy/full).
+	 */
+	prefs?: ScopePrefs;
+}
+
+/** Workspace oauth.json is shared by pi-google-workspace + google_calendar. */
+const WORKSPACE_PRODUCTS = PRODUCTS.filter((p) => p !== "gmail");
+
+function gmailSelected(prefs?: ScopePrefs): boolean {
+	return !prefs || prefs.gmail !== "off";
+}
+
+function workspaceSelected(prefs?: ScopePrefs): boolean {
+	return !prefs || WORKSPACE_PRODUCTS.some((p) => prefs[p] !== "off");
 }
 
 /**
@@ -226,6 +244,11 @@ export function fanOutCredentials(paths: GooglePaths, input: FanOutInput): void 
 	const scope = input.tokens.scope ?? UNION_SCOPES.join(" ");
 
 	// Destination 1 — shared workspace + calendar oauth.json (AuthConfig shape).
+	// Written only when at least one workspace product (calendar/drive/docs/
+	// sheets/slides) is selected; otherwise removed so granted state matches.
+	if (!workspaceSelected(input.prefs)) {
+		removeIfExists(paths.workspaceOAuth);
+	} else {
 	const prevWs = readJson<WorkspaceConfig>(paths.workspaceOAuth);
 	const wsConfig: WorkspaceConfig = {
 		clientId: input.client.clientId,
@@ -244,6 +267,23 @@ export function fanOutCredentials(paths: GooglePaths, input: FanOutInput): void 
 		},
 	};
 	writeJson(paths.workspaceOAuth, wsConfig);
+	}
+
+	// Destination 2 — pi-gmail (settings creds + token file). Written only when
+	// Gmail is selected; otherwise both are removed (the gmail token file is
+	// cleared; pi-gmail's non-credential settings keys are preserved).
+	if (!gmailSelected(input.prefs)) {
+		removeIfExists(paths.gmailTokens);
+		const settings = readJson<Record<string, unknown>>(paths.piSettings);
+		if (settings && settings["pi-gmail"] && typeof settings["pi-gmail"] === "object") {
+			const gmail = { ...(settings["pi-gmail"] as Record<string, unknown>) };
+			delete gmail.clientId;
+			delete gmail.clientSecret;
+			settings["pi-gmail"] = gmail;
+			writeJson(paths.piSettings, settings);
+		}
+		return;
+	}
 
 	// Destination 2a — pi-gmail client creds in pi's global settings.json.
 	// Merge so we never clobber unrelated settings keys or pi-gmail's own
