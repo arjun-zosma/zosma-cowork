@@ -1083,10 +1083,7 @@ async fn google_get_app_status(
 
 /// Google app: install (via pi's package manager) any missing app extensions.
 #[tauri::command]
-async fn google_install_app(
-    s: State<'_, AppState>,
-    prefs: Option<Value>,
-) -> Result<Value, String> {
+async fn google_install_app(s: State<'_, AppState>, prefs: Option<Value>) -> Result<Value, String> {
     let id = format!("gia-{}", uuid_v4());
     let mut payload = serde_json::json!({"type":"install_google_app","id":id});
     if let Some(p) = prefs {
