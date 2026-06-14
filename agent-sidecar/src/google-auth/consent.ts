@@ -3,13 +3,15 @@
  * broker. Returns the raw token response + resolved account email; the caller
  * (broker.fanOutCredentials) writes them to the real package config files.
  *
- * Flow (Google installed-app / loopback, RFC 8252 + PKCE S256):
- *   1. Bind an ephemeral http server on 127.0.0.1 → redirect_uri.
- *   2. Open the consent URL (browser) via the injected `onAuthUrl` callback —
- *      mirrors the existing start_oauth handler which emits an
- *      `oauth_open_url` event the frontend opens.
- *   3. Receive ?code=…&state=… on the loopback callback, verify state.
- *   4. Exchange code (+ code_verifier + client_secret) for tokens.
+ * Flow (PKCE S256 via the Zosma backend broker — NO secret on the device):
+ *   1. Bind an ephemeral http server on 127.0.0.1 (the loopback listener).
+ *   2. redirect_uri is the BROKER's HTTPS /callback (a registered Web-client
+ *      redirect); `state` carries the loopback port + a CSRF nonce.
+ *   3. Open the consent URL (browser). Google redirects to the broker, which
+ *      bounces the browser back to 127.0.0.1:<port>/oauth2callback?code&state.
+ *   4. Verify the state nonce, then POST {code, code_verifier, redirect_uri} to
+ *      the broker /token endpoint — the broker adds the client_secret and
+ *      returns the tokens. The device never holds the secret.
  *   5. Resolve the account email from the userinfo endpoint.
  *
  * Cancellation: pass an AbortSignal; aborting closes the loopback server and
@@ -22,7 +24,6 @@ import { createHash, randomBytes } from "node:crypto";
 import { type EmbeddedClient, type OAuthTokenResponse, UNION_SCOPES } from "./broker.js";
 
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
-const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo";
 
 export interface ConsentResult {
@@ -69,19 +70,23 @@ function abortError(): Error {
 
 /** Run the full consent flow and return tokens + email. */
 export async function runConsent(opts: ConsentOptions): Promise<ConsentResult> {
-	if (!opts.client.clientId || !opts.client.clientSecret) {
+	if (!opts.client.clientId || !opts.client.brokerUrl) {
 		throw new Error(
-			"Zosma Google OAuth client not configured (set ZOSMA_GOOGLE_CLIENT_ID / ZOSMA_GOOGLE_CLIENT_SECRET).",
+			"Zosma Google OAuth client not configured (set ZOSMA_GOOGLE_CLIENT_ID; broker via ZOSMA_OAUTH_BROKER_URL).",
 		);
 	}
 	if (opts.signal?.aborted) throw abortError();
 
 	const { verifier, challenge } = makePkce();
-	const state = base64Url(randomBytes(16));
+	const nonce = base64Url(randomBytes(16));
 
 	const server = createServer();
 	const port = await listen(server, opts.port ?? 0);
-	const redirectUri = `http://127.0.0.1:${port}/oauth2callback`;
+	// Google redirects to the broker's HTTPS callback (a registered redirect),
+	// which bounces back to this loopback listener. `state` carries the port so
+	// the broker knows where to bounce, plus a nonce we verify on return.
+	const redirectUri = `${opts.client.brokerUrl}/callback`;
+	const state = base64Url(Buffer.from(JSON.stringify({ port, nonce }), "utf8"));
 
 	// Wait for the loopback callback (or abort).
 	const code = await new Promise<string>((resolve, reject) => {
@@ -100,6 +105,7 @@ export async function runConsent(opts: ConsentOptions): Promise<ConsentResult> {
 			const err = url.searchParams.get("error");
 			const returnedState = url.searchParams.get("state");
 			const returnedCode = url.searchParams.get("code");
+			const returnedNonce = decodeState(returnedState).nonce;
 
 			const finish = (status: number, body: string) => {
 				res.writeHead(status, { "Content-Type": "text/html; charset=utf-8" }).end(body);
@@ -112,7 +118,7 @@ export async function runConsent(opts: ConsentOptions): Promise<ConsentResult> {
 				reject(new Error(`Google consent error: ${err}`));
 				return;
 			}
-			if (!returnedState || returnedState !== state) {
+			if (!returnedNonce || returnedNonce !== nonce) {
 				finish(400, htmlPage("Connection failed", "State mismatch — please try again.", false));
 				reject(new Error("OAuth state mismatch"));
 				return;
@@ -149,10 +155,24 @@ export async function runConsent(opts: ConsentOptions): Promise<ConsentResult> {
 		opts.onAuthUrl(`${AUTH_URL}?${authParams.toString()}`);
 	});
 
-	// Exchange the code for tokens (client_secret + PKCE verifier).
+	// Exchange the code for tokens via the BROKER (no secret on the device).
 	const tokens = await exchangeCode(opts.client, code, redirectUri, verifier, opts.signal);
 	const email = await fetchEmail(tokens.access_token, opts.signal);
 	return { tokens, email, redirectUri };
+}
+
+/** Decode the broker `state` blob → { port, nonce }; tolerant of garbage. */
+function decodeState(raw: string | null): { port?: number; nonce?: string } {
+	if (!raw) return {};
+	try {
+		const v = JSON.parse(Buffer.from(raw, "base64url").toString("utf8")) as {
+			port?: number;
+			nonce?: string;
+		};
+		return v && typeof v === "object" ? v : {};
+	} catch {
+		return {};
+	}
 }
 
 async function exchangeCode(
@@ -162,17 +182,10 @@ async function exchangeCode(
 	verifier: string,
 	signal?: AbortSignal,
 ): Promise<OAuthTokenResponse> {
-	const res = await fetch(TOKEN_URL, {
+	const res = await fetch(`${client.brokerUrl}/token`, {
 		method: "POST",
-		headers: { "Content-Type": "application/x-www-form-urlencoded" },
-		body: new URLSearchParams({
-			code,
-			client_id: client.clientId,
-			client_secret: client.clientSecret,
-			redirect_uri: redirectUri,
-			grant_type: "authorization_code",
-			code_verifier: verifier,
-		}),
+		headers: { "Content-Type": "application/json", Accept: "application/json" },
+		body: JSON.stringify({ code, code_verifier: verifier, redirect_uri: redirectUri }),
 		signal,
 	});
 	const text = await res.text();
@@ -186,7 +199,7 @@ async function exchangeCode(
 		const msg =
 			typeof data.error_description === "string"
 				? data.error_description
-				: `Token exchange failed (HTTP ${res.status})`;
+				: `Token exchange failed via broker (HTTP ${res.status})`;
 		throw new Error(msg);
 	}
 	return data as unknown as OAuthTokenResponse;
