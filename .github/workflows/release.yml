@@ -219,6 +219,16 @@ jobs:
           # When unset, tauri-action skips updater artifacts + latest.json.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Google OAuth config baked into the sidecar by scripts/prebuild.mjs
+          # (run here via tauri-action's beforeBuildCommand). These are PUBLIC
+          # values — the Web client_id and the prod broker URL; NO secret is
+          # baked (the client secret lives only in the broker / Secret Manager).
+          # Repo VARIABLES (not secrets). When unset, the sidecar falls back to
+          # its committed STAGING defaults, so release builds must set these to
+          # ship prod. Staging builds (staging-build.yml) intentionally leave
+          # them unset → staging defaults.
+          ZOSMA_GOOGLE_CLIENT_ID: ${{ vars.ZOSMA_GOOGLE_CLIENT_ID }}
+          ZOSMA_OAUTH_BROKER_URL: ${{ vars.ZOSMA_OAUTH_BROKER_URL }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "${{ github.ref_name }}"

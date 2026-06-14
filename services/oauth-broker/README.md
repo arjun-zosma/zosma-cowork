@@ -65,6 +65,33 @@ In the **Zosma Cowork Staging** OAuth client → *Authorised redirect URIs* → 
 https://broker-uoux53xara-uc.a.run.app/callback
 ```
 
+## Deployed (production)
+
+| | |
+|---|---|
+| Project | `keen-wavelet-461720-h0` (Reva) |
+| Region | `us-central1` |
+| Service | Cloud Functions gen2 / Cloud Run `broker-prod` |
+| Secret | Secret Manager `GOOGLE_OAUTH_CLIENT_SECRET_PROD` |
+| **Base URL** | `https://broker-prod-uoux53xara-uc.a.run.app` |
+| **Redirect URI to register** | `https://broker-prod-uoux53xara-uc.a.run.app/callback` |
+| Web client | `830231223031-3ltm086u8…` (Zosma Cowork Prod) |
+
+Prod values are baked into **release** builds (tagged `v*`) by `prebuild.mjs`
+from GitHub repo **variables** (public, not secrets):
+`ZOSMA_GOOGLE_CLIENT_ID` + `ZOSMA_OAUTH_BROKER_URL` (see `.github/workflows/release.yml`).
+Staging builds leave them unset → the committed staging defaults are used.
+
+Deploy/redeploy prod (distinct service + secret, same script):
+
+```bash
+cd services/oauth-broker
+SERVICE=broker-prod SECRET_NAME=GOOGLE_OAUTH_CLIENT_SECRET_PROD \
+GOOGLE_OAUTH_CLIENT_ID=830231223031-3ltm086u8ngc67ah5r1bk706g285ahkl.apps.googleusercontent.com \
+CLIENT_SECRET_FILE=~/Downloads/client_secret_830231223031-3ltm086u8*.json \
+./deploy.sh
+```
+
 ## Deploy / redeploy
 
 Deployed via **gcloud** (not Firebase). `./deploy.sh` captures the exact working
