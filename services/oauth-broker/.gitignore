@@ -1,0 +1,13 @@
+# Firebase
+.firebase/
+firebase-debug.log
+*-debug.log
+
+# Functions build output + deps
+functions/lib/
+functions/node_modules/
+
+# Local env (contains the env-specific public client_id; secret is NEVER here)
+functions/.env
+functions/.env.*.local
+functions/.env.local
