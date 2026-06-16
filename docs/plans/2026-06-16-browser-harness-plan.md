@@ -204,10 +204,28 @@ Concrete, file-level tasks grounded in the current repo layout. Branch: `feat/br
 - [ ] Session lifecycle: idle-timeout teardown is in place; explicit per-Cowork-
       session isolation (profile/`--session-name`) is a Phase 2 concern.
 
-### 0.3 — Minimal UX: activity chip (next)
-- [ ] Emit a `browser:activity` event from the sidecar on each tool call (`{ url, action }`).
-- [ ] Render an inline chip in the chat stream (reuse `StatusLine.tsx` styling): `🌐 browsing example.com → reading…`.
-- [ ] No screencast yet — text status only (that's Phase 1).
+### 0.3 — Minimal UX: activity chip ✅
+**Corrected approach (simpler than originally planned):** no new `browser:activity`
+event or sidecar/Rust transport is needed. Browser tools already flow through the
+pi stream as ordinary tool calls (`ToolCallInfo { name, args, status }`), and the
+existing "Perplexity-style" activity system (`friendlyToolPhrase` →
+`clubActivities`/`headlineActivity` → `ActivityBlock` + `StatusLine`) already
+renders a live, non-technical chip from those. So 0.3 is a **frontend-only** hook
+into that system.
+- [x] Mapped `browser_*` tools to plain phrases in `src/lib/statusLabels.ts`
+      (`friendlyToolPhrase`): navigate→`Browsing <domain>`, snapshot/extract→
+      `Reading the page`, click→`Clicking on the page`, type→`Filling in the
+      page`, close→`Closing the browser`, unknown `browser_*`→`Browsing the web`.
+- [x] Enriched `friendlyToolPhrase(name, args?)` to surface the **domain** from
+      `browser_navigate`'s `url` arg via a new `hostFromUrl()` helper (strips
+      protocol/`www`/path; never leaks the full URL or raw tool name). Threaded
+      `tc.args` through `clubActivities` and the two `StatusLine` call sites.
+- [x] Lights up **both** surfaces for free: the in-chat `ActivityBlock` chip and
+      the footer `StatusLine` — both already consume `friendlyToolPhrase`.
+- [x] Unit tests in `statusLabels.test.ts` (browser phrases, domain extraction,
+      generic fallbacks, `hostFromUrl`, and a navigate→read→act clubbing run) —
+      30 tests passing across `statusLabels` + `StatusLine`.
+- [ ] No screencast yet — text status only (that's Phase 1, the live PiP view).
 
 ### 0.4 — Guardrails
 - [x] Per-call hard timeout (30s) + daemon idle-timeout (60s) so the loop never hangs.
@@ -222,5 +240,8 @@ Concrete, file-level tasks grounded in the current repo layout. Branch: `feat/br
 - [ ] Prompt "research X and summarize" → agent uses the tools live in the app
       (needs the sidecar built + app run — next session).
 - [x] Browser session torn down via explicit `browser_close` + idle timeout.
-- [ ] Activity chip visible during a run (0.3).
+- [x] Activity chip wired (0.3): browser tool calls render friendly activities
+      (`Browsing <domain>` → `Reading the page` → …) in the chat `ActivityBlock`
+      and footer `StatusLine`. Visible-in-app verification pairs with the
+      sidecar-built run above.
 - [ ] PR opened against `main`.

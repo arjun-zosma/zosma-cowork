@@ -9,12 +9,47 @@
 import type { ToolCallInfo } from "@/types";
 
 /**
+ * Extract a clean host label from a URL for display, e.g.
+ * "https://www.example.com/path?q=1" → "example.com". Returns "" if the input
+ * isn't a usable URL, so callers can fall back to a generic phrase.
+ */
+export function hostFromUrl(raw: unknown): string {
+	if (typeof raw !== "string" || raw.trim() === "") return "";
+	const candidate = /^[a-z]+:\/\//i.test(raw) ? raw : `https://${raw}`;
+	try {
+		const host = new URL(candidate).hostname.replace(/^www\./, "");
+		return host;
+	} catch {
+		return "";
+	}
+}
+
+/**
  * Friendly present-tense phrase for a tool, shown while it runs.
  * Hardcoded by design (v1) — never surface raw tool names/paths/commands.
+ *
+ * `args` is optional context (the tool's call arguments). When present it lets
+ * a phrase carry a human-friendly detail — e.g. the domain being browsed —
+ * without ever exposing raw tool names or full URLs.
  */
-export function friendlyToolPhrase(toolName: string): string {
+export function friendlyToolPhrase(toolName: string, args?: Record<string, unknown>): string {
 	// Normalize provider-namespaced tools (e.g. "google_docs_create")
 	const name = toolName.toLowerCase();
+
+	// Agentic browser (Phase 0.3): surface what the agent is doing in the
+	// browser. The LLM-facing tools are browser_navigate/_snapshot/_click/
+	// _type/_extract/_close; here we map them to plain, non-technical phrases.
+	if (name.startsWith("browser_") || name === "browser") {
+		if (name === "browser_navigate") {
+			const host = hostFromUrl(args?.url);
+			return host ? `Browsing ${host}` : "Browsing the web";
+		}
+		if (name === "browser_snapshot" || name === "browser_extract") return "Reading the page";
+		if (name === "browser_click") return "Clicking on the page";
+		if (name === "browser_type") return "Filling in the page";
+		if (name === "browser_close") return "Closing the browser";
+		return "Browsing the web";
+	}
 
 	if (name.startsWith("google_docs")) return "Working on your document";
 	if (name.startsWith("google_sheets")) return "Working on your spreadsheet";
@@ -78,7 +113,7 @@ export function clubActivities(toolCalls: ToolCallInfo[]): Activity[] {
 	const activities: Activity[] = [];
 
 	for (const tc of toolCalls) {
-		const phrase = friendlyToolPhrase(tc.name);
+		const phrase = friendlyToolPhrase(tc.name, tc.args);
 		const last = activities[activities.length - 1];
 
 		if (last && last.phrase === phrase) {

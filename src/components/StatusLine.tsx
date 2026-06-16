@@ -84,6 +84,7 @@ function activityLabel(
 		if (toolPhase) {
 			switch (toolPhase.type) {
 				case "calling":
+					return friendlyToolPhrase(toolPhase.toolName, toolPhase.args);
 				case "executing":
 					return friendlyToolPhrase(toolPhase.toolName);
 				case "done":
@@ -93,7 +94,7 @@ function activityLabel(
 			}
 		}
 		const running = (toolCalls || []).find((tc) => tc.status === "running");
-		return running ? friendlyToolPhrase(running.name) : "Working";
+		return running ? friendlyToolPhrase(running.name, running.args) : "Working";
 	}
 	return status ?? "Working";
 }

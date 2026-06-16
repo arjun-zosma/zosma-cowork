@@ -1,13 +1,14 @@
 import type { ToolCallInfo } from "@/types";
 import { describe, expect, it } from "vitest";
-import { clubActivities, friendlyToolPhrase, headlineActivity } from "./statusLabels";
+import { clubActivities, friendlyToolPhrase, headlineActivity, hostFromUrl } from "./statusLabels";
 
 function tc(
 	name: string,
 	status: ToolCallInfo["status"] = "completed",
 	id = Math.random().toString(36).slice(2),
+	args: Record<string, unknown> = {},
 ): ToolCallInfo {
-	return { id, name, args: {}, status };
+	return { id, name, args, status };
 }
 
 describe("friendlyToolPhrase", () => {
@@ -38,6 +39,50 @@ describe("friendlyToolPhrase", () => {
 	it("falls back for unknown tools", () => {
 		expect(friendlyToolPhrase("some_mystery_tool")).toBe("Working on it");
 	});
+
+	it("maps agentic browser tools to plain phrases", () => {
+		expect(friendlyToolPhrase("browser_snapshot")).toBe("Reading the page");
+		expect(friendlyToolPhrase("browser_extract")).toBe("Reading the page");
+		expect(friendlyToolPhrase("browser_click")).toBe("Clicking on the page");
+		expect(friendlyToolPhrase("browser_type")).toBe("Filling in the page");
+		expect(friendlyToolPhrase("browser_close")).toBe("Closing the browser");
+	});
+
+	it("surfaces the domain for browser_navigate when a url is given", () => {
+		expect(
+			friendlyToolPhrase("browser_navigate", { url: "https://www.example.com/path?q=1" }),
+		).toBe("Browsing example.com");
+		expect(friendlyToolPhrase("browser_navigate", { url: "example.org" })).toBe(
+			"Browsing example.org",
+		);
+	});
+
+	it("falls back to a generic browse phrase without a usable url", () => {
+		expect(friendlyToolPhrase("browser_navigate")).toBe("Browsing the web");
+		expect(friendlyToolPhrase("browser_navigate", { url: "" })).toBe("Browsing the web");
+		expect(friendlyToolPhrase("browser_navigate", { url: 42 })).toBe("Browsing the web");
+	});
+
+	it("never leaks raw browser tool names", () => {
+		expect(friendlyToolPhrase("browser_unknown_future_tool")).toBe("Browsing the web");
+	});
+});
+
+describe("hostFromUrl", () => {
+	it("strips protocol, www, and path", () => {
+		expect(hostFromUrl("https://www.example.com/a/b?c=1")).toBe("example.com");
+		expect(hostFromUrl("http://docs.example.co.uk/page")).toBe("docs.example.co.uk");
+	});
+
+	it("assumes https for bare hosts", () => {
+		expect(hostFromUrl("example.com")).toBe("example.com");
+	});
+
+	it("returns empty string for non-urls", () => {
+		expect(hostFromUrl("")).toBe("");
+		expect(hostFromUrl(undefined)).toBe("");
+		expect(hostFromUrl(123)).toBe("");
+	});
 });
 
 describe("clubActivities", () => {
@@ -53,6 +98,22 @@ describe("clubActivities", () => {
 		expect(activities).toHaveLength(1);
 		expect(activities[0].count).toBe(3);
 		expect(activities[0].phrase).toBe("Looking through files");
+	});
+
+	it("renders a browser session as domain → read → act activities", () => {
+		const activities = clubActivities([
+			tc("browser_navigate", "completed", "a", { url: "https://example.com" }),
+			tc("browser_snapshot", "completed", "b"),
+			tc("browser_extract", "completed", "c"),
+			tc("browser_click", "running", "d"),
+		]);
+		// snapshot + extract both map to "Reading the page" and club together.
+		expect(activities.map((a) => a.phrase)).toEqual([
+			"Browsing example.com",
+			"Reading the page",
+			"Clicking on the page",
+		]);
+		expect(activities[1].count).toBe(2);
 	});
 
 	it("keeps distinct phrases as separate ordered activities", () => {
