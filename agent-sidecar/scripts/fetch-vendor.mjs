@@ -65,7 +65,7 @@ export const VENDORED = [
 		// globalThis.__PI_ROUTINES_ON_FIRE). Imported from src/index.ts; see
 		// agent-sidecar/src/index.ts. Pinned to a VERIFIED release tag — bump
 		// via `npm run vendor:latest` to pull the latest stable release.
-		tag: "v0.1.0",
+		tag: "v0.1.1",
 		// GitHub repo slug used by `vendor:latest` to query the latest release.
 		releaseRepo: "zosmaai/pi-routines",
 		trim: [".git", ".github", "src/index.test.ts", "node_modules"],
@@ -174,8 +174,14 @@ function main() {
 		console.log(`[fetch-vendor] cloning ${v.name} @ ${ref} (${sha.slice(0, 9)})…`);
 		rmSync(dest, { recursive: true, force: true });
 		mkdirSync(dest, { recursive: true });
-		execSync(`git clone --quiet ${v.repo} "${dest}"`, { stdio: "inherit" });
-		execSync(`git -C "${dest}" checkout --quiet ${sha}`, { stdio: "inherit" });
+		// `core.longpaths=true` keeps Windows checkouts from failing on paths >260
+		// chars (MAX_PATH) if a vendored repo ever carries deeply nested files.
+		execSync(`git -c core.longpaths=true clone --quiet ${v.repo} "${dest}"`, {
+			stdio: "inherit",
+		});
+		execSync(`git -C "${dest}" -c core.longpaths=true checkout --quiet ${sha}`, {
+			stdio: "inherit",
+		});
 		for (const trash of v.trim) {
 			rmSync(join(dest, trash), { recursive: true, force: true });
 		}
