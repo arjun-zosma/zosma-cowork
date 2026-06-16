@@ -144,38 +144,83 @@ Recommend: **build Phase 0 + Phase 1 together as the first shippable milestone**
 
 ---
 
-## Phase 0 — Implementation Checklist (start here)
+## Phase 0 — Implementation Checklist (in progress)
 
 Concrete, file-level tasks grounded in the current repo layout. Branch: `feat/browser-harness` (this worktree).
 
-### 0.1 — Vendor the `agent-browser` binary as a sidecar
-- [ ] Add `agent-browser` (Rust) build/fetch to the sidecar bundling step (mirror the existing `pi-routines` vendor pattern — see `agent-sidecar/` fetch-vendor scripts).
-- [ ] Place the platform binary under the Tauri sidecar path so `externalBin` picks it up (`src-tauri/tauri.conf.json` → `bundle.externalBin`).
-- [ ] Add a `shell:allow-execute` allow-entry for the `agent-browser` sidecar in `src-tauri/capabilities/default.json` (today only `sh -c` is allowed).
-- [ ] Smoke test: from the sidecar, spawn `agent-browser`, navigate to a URL, get a snapshot back.
+> **Integration model corrected during implementation.** The research-era plan
+> assumed we'd git-vendor a Rust binary and wire a Tauri `externalBin` sidecar.
+> That was wrong on two counts:
+>
+> 1. **`agent-browser` is an npm package** (`vercel-labs/agent-browser`, 36k⭐,
+>    Apache-2.0) that installs a native Rust binary across all 5 target
+>    platforms (mac arm64/x64, linux arm64/x64, win x64). It's a normal
+>    `dependencies` entry in `agent-sidecar/package.json` — **not** the git-clone
+>    `fetch-vendor.mjs` path (that's for TS/JS pi extensions).
+> 2. **The tools run inside the Node sidecar**, which can `child_process.spawn()`
+>    freely. The Tauri `shell:allow-execute` capability governs the *webview*,
+>    not the sidecar — so **no capability change is needed**.
+>
+> Other facts that shaped the build:
+> - **Client-daemon architecture**: the first CLI command auto-starts a Rust
+>   daemon that holds the live browser; later invocations attach to it. So each
+>   tool = one stateless `execFileSync` spawn, yet `open`→`snapshot`→`click`
+>   share one browser. `AGENT_BROWSER_IDLE_TIMEOUT_MS` auto-tears-down the
+>   daemon (orphan-process safety net).
+> - **Chrome auto-detected**: existing Chrome/Brave/Chromium/Playwright installs
+>   are reused, so the ~150MB `agent-browser install` download is usually skipped.
+> - **Guardrails are built in**: `--allowed-domains`, `--action-policy`,
+>   `--confirm-actions`, `--max-output`.
+> - **`--json`** returns `{success, data:{snapshot, refs:{e1:{role,name}}}}`.
+> - **`--cdp <port|url>`** is the Phase 1 screencast hook.
 
-### 0.2 — Register the browser tool set as a pi extension
-- [ ] New extension module under `agent-sidecar/` exposing `tools: [...]` (follow the `extension-manager.ts` / `disk-extension-loader.ts` `virtualModules` registration pattern).
-- [ ] Tools (thin wrappers over `agent-browser` CLI calls):
-  - [ ] `browser_navigate(url)` → loads page, returns title + URL
-  - [ ] `browser_snapshot()` → accessibility-tree text (token-efficient)
-  - [ ] `browser_click(ref)` → click by snapshot ref id
-  - [ ] `browser_type(ref, text)` → type into field
-  - [ ] `browser_extract(query)` → return relevant text for the query
-  - [ ] `browser_close()` → tear down the ephemeral session
-- [ ] Session lifecycle: one ephemeral browser per agent run; auto-close on run end.
+### 0.1 — Add `agent-browser` as a sidecar dependency ✅
+- [x] `npm install agent-browser` in `agent-sidecar/` (pinned `^0.27.3`). Native
+      binary resolves at `node_modules/.bin/agent-browser`.
+- [x] Verified it auto-detects local Chromium/Brave (no Chrome download needed).
+- [x] Smoke test passes: navigate → snapshot → extract → close against example.com
+      (`agent-sidecar/src/browser/smoke.ts`, run via `npx tsx`).
+- [ ] **PRODUCTION BUNDLING (follow-up, not Phase 0-blocking).** The Tauri bundle
+      ships only `index.cjs` + node binaries as `resources` — **not** node_modules.
+      The `agent-browser` native binary must be added to the Tauri `resources`/
+      `externalBin` set (per-platform) for packaged builds. Until then the
+      executor falls back to a PATH / global `agent-browser` for dev + global
+      users. See `agent-browser-executor.ts` header.
 
-### 0.3 — Minimal UX: activity chip
+### 0.2 — Register the browser tool set as a pi extension ✅
+- [x] `agent-sidecar/src/browser/` module: `extension.ts` registers 6 tools via
+      `pi.registerTool(...)` (mirrors `office-docs/extension.ts`); wired into the
+      `extensionFactories` array in `index.ts` as `zosmaBrowser`.
+- [x] `agent-browser-executor.ts` — typed CLI wrapper (binary resolution, `--json`
+      parsing, 30s per-call timeout, structured errors).
+- [x] Tools (thin wrappers over the CLI):
+  - [x] `browser_navigate(url)` → loads page, returns title + URL
+  - [x] `browser_snapshot({interactive,urls})` → ref-annotated a11y tree
+  - [x] `browser_click(ref)` → click by snapshot ref (or selector)
+  - [x] `browser_type(ref, text)` → fill a field
+  - [x] `browser_extract({ref?})` → element text, or full-page readable text
+  - [x] `browser_close()` → tear down the session
+- [x] Unit tests: `tools.test.ts` (6 passing — tool shape + `withScheme`/`normalizeRef`).
+- [ ] Session lifecycle: idle-timeout teardown is in place; explicit per-Cowork-
+      session isolation (profile/`--session-name`) is a Phase 2 concern.
+
+### 0.3 — Minimal UX: activity chip (next)
 - [ ] Emit a `browser:activity` event from the sidecar on each tool call (`{ url, action }`).
 - [ ] Render an inline chip in the chat stream (reuse `StatusLine.tsx` styling): `🌐 browsing example.com → reading…`.
 - [ ] No screencast yet — text status only (that's Phase 1).
 
 ### 0.4 — Guardrails
-- [ ] Allowlist/denylist for navigable domains (config setting, default allow-all with a confirm on first external nav — TBD).
-- [ ] Hard timeout per tool call (e.g. 30s nav) so the agent loop never hangs.
-- [ ] Headless only; no persisted cookies/auth in Phase 0.
+- [x] Per-call hard timeout (30s) + daemon idle-timeout (60s) so the loop never hangs.
+- [x] `--allowed-domains` plumbed through the executor (`ExecutorOptions.allowedDomains`).
+- [ ] Surface an allowlist config setting in the UI (default allow-all, confirm on
+      first external nav — TBD). agent-browser's `--confirm-actions` /
+      `--action-policy` can back the destructive-action gates.
+- [x] Headless only; no persisted cookies/auth in Phase 0.
 
 ### 0.5 — Done criteria
-- [ ] Prompt "research X and summarize" → agent navigates, snapshots, extracts, answers — with the activity chip visible during the run.
-- [ ] Browser session always torn down (no orphan Chromium processes).
-- [ ] Docs updated; PR opened against `main`.
+- [x] navigate → snapshot → extract → close proven end-to-end (smoke test).
+- [ ] Prompt "research X and summarize" → agent uses the tools live in the app
+      (needs the sidecar built + app run — next session).
+- [x] Browser session torn down via explicit `browser_close` + idle timeout.
+- [ ] Activity chip visible during a run (0.3).
+- [ ] PR opened against `main`.

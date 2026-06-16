@@ -166,6 +166,8 @@ import piAnthropicMessages from "./vendor/anthropic-messages/extensions/index.js
 // Zosma Office Document Generation extension — registers 8 OfficeCLI tools.
 import zosmaOfficeDocs from "./office-docs/extension.js";
 import zosmaGoogleCalendar from "./google-calendar/extension.js";
+// Zosma Agentic Browser extension — registers 6 agent-browser tools (Phase 0).
+import zosmaBrowser from "./browser/extension.js";
 // Vendored forked pi-routines scheduler (#300). Bundled into the sidecar so it
 // works on any machine (no absolute ~/code path). Loaded ONLY by Cowork; the
 // pi CLI never sees it. Source of truth: github.com/zosmaai/pi-routines,
@@ -1494,6 +1496,7 @@ async function main() {
 				piAnthropicMessages,
 				zosmaOfficeDocs,
 				zosmaGoogleCalendar,
+				zosmaBrowser,
 				...diskExtensionFactories,
 			],
 			// Cowork self-knowledge (#263): materialize the ABOUT doc under the
