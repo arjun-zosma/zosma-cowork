@@ -12,6 +12,7 @@ import {
 	createCloseTool,
 	createExtractTool,
 	createNavigateTool,
+	createSessionTool,
 	createSnapshotTool,
 	createTypeTool,
 	withScheme,
@@ -47,6 +48,7 @@ describe("normalizeRef", () => {
 
 describe("tool registration shape", () => {
 	const tools = [
+		createSessionTool(),
 		createNavigateTool(),
 		createSnapshotTool(),
 		createExtractTool(),
@@ -55,13 +57,14 @@ describe("tool registration shape", () => {
 		createCloseTool(),
 	];
 
-	it("exposes the six Phase 0 browser tools with expected names", () => {
+	it("exposes all browser tools incl. browser_session with expected names", () => {
 		expect(tools.map((t) => t.name).sort()).toEqual(
 			[
 				"browser_click",
 				"browser_close",
 				"browser_extract",
 				"browser_navigate",
+				"browser_session",
 				"browser_snapshot",
 				"browser_type",
 			].sort(),
@@ -75,5 +78,15 @@ describe("tool registration shape", () => {
 			expect(t.parameters).toBeDefined();
 			expect(typeof t.execute).toBe("function");
 		}
+	});
+
+	it("browser_session accepts start/stop/status actions", () => {
+		const session = createSessionTool();
+		expect(session.name).toBe("browser_session");
+		// The action param is a union of the three lifecycle verbs.
+		const schema = JSON.stringify(session.parameters);
+		expect(schema).toContain("start");
+		expect(schema).toContain("stop");
+		expect(schema).toContain("status");
 	});
 });

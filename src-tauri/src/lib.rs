@@ -478,6 +478,10 @@ async fn read_stdout(
                             || kind == "agent_reload_failed"
                             || kind == "ui_request"
                             || kind == "ui_cancel"
+                            // Browser Session (Mode B) lifecycle: carries the
+                            // live-stream WebSocket URL + current URL/state so
+                            // the React BrowserViewport can attach and render.
+                            || kind == "browser_session"
                         {
                             let _ = app.emit(kind, e.clone());
                         }

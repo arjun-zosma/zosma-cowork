@@ -57,6 +57,18 @@ export interface OpenData {
 	url: string;
 }
 
+export interface StreamStatusData {
+	connected: boolean;
+	enabled: boolean;
+	/** OS-assigned (or requested) WebSocket port for the live frame stream. */
+	port: number;
+	screencasting: boolean;
+}
+
+export interface ConnectData {
+	launched: boolean;
+}
+
 export interface SnapshotData {
 	origin?: string;
 	/** Map of ref id (e.g. "e2") -> { role, name }. */
@@ -130,16 +142,20 @@ export class AgentBrowserExecutor {
 	 * `{ success:false, error }`); throws AgentBrowserError only for
 	 * spawn / timeout / unparseable-output faults.
 	 */
-	private run<T>(args: string[]): AgentBrowserResult<T> {
+	private run<T>(
+		args: string[],
+		opts: { timeoutMs?: number } = {},
+	): AgentBrowserResult<T> {
 		const fullArgs = [...args, "--json"];
 		if (this.allowedDomains) {
 			fullArgs.push("--allowed-domains", this.allowedDomains);
 		}
+		const timeout = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
 		let stdout: string;
 		try {
 			stdout = execFileSync(this.binary, fullArgs, {
-				timeout: DEFAULT_TIMEOUT_MS,
+				timeout,
 				encoding: "utf8",
 				maxBuffer: 16 * 1024 * 1024,
 				env: {
@@ -168,7 +184,7 @@ export class AgentBrowserExecutor {
 			}
 			if (e.signal === "SIGTERM" || e.code === "ETIMEDOUT") {
 				throw new AgentBrowserError(
-					`agent-browser command timed out after ${DEFAULT_TIMEOUT_MS}ms: ${args.join(" ")}`,
+					`agent-browser command timed out after ${timeout}ms: ${args.join(" ")}`,
 					"timeout",
 				);
 			}
@@ -223,6 +239,47 @@ export class AgentBrowserExecutor {
 	/** Read text content of an element by ref or selector. */
 	getText(ref: string): AgentBrowserResult<unknown> {
 		return this.run(["get", "text", normalizeRef(ref)]);
+	}
+
+	/**
+	 * Type text via real keystrokes WITHOUT a selector (keyboard inserttext).
+	 * This is the reliable path for rich-text / contenteditable editors (e.g.
+	 * LinkedIn's Quill comment box) where `fill`/`type` against the element
+	 * silently no-op. The caller must focus the field first (click it).
+	 */
+	keyboardInsertText(text: string): AgentBrowserResult<unknown> {
+		return this.run(["keyboard", "inserttext", text]);
+	}
+
+	// ─── Mode B: managed-session lifecycle ─────────────────────────────
+
+	/**
+	 * Attach the agent-browser daemon to an already-running browser via CDP
+	 * (port number or ws/http URL). Used by the Browser Manager after it
+	 * launches the persistent managed Chromium. Longer timeout: connecting +
+	 * the browser's first CDP handshake can be slow on a cold start.
+	 */
+	connect(portOrUrl: string | number): AgentBrowserResult<ConnectData> {
+		return this.run<ConnectData>(["connect", String(portOrUrl)], {
+			timeoutMs: 45_000,
+		});
+	}
+
+	/** Enable the session-scoped live WebSocket stream; reports the bound port. */
+	streamEnable(port?: number): AgentBrowserResult<StreamStatusData> {
+		const args = ["stream", "enable"];
+		if (port) args.push("--port", String(port));
+		return this.run<StreamStatusData>(args);
+	}
+
+	/** Current stream status (connected/enabled/port/screencasting). */
+	streamStatus(): AgentBrowserResult<StreamStatusData> {
+		return this.run<StreamStatusData>(["stream", "status"]);
+	}
+
+	/** Current page URL + title (for the viewport URL bar). */
+	pageInfo(): AgentBrowserResult<{ url: string }> {
+		return this.run<{ url: string }>(["get", "url"]);
 	}
 
 	/** Close the browser session and shut down the daemon. */

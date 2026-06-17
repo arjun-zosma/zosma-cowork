@@ -1,16 +1,17 @@
 import { ChatView } from "@/chat/ChatView";
+import { BrowserViewport } from "@/components/BrowserViewport";
 import { ChatWidthToggle } from "@/components/ChatWidthToggle";
 import { ExtensionUiHost } from "@/components/ExtensionUiHost";
 import { HomeView } from "@/components/HomeView";
 import { MobileBottomNav } from "@/components/MobileBottomNav";
 import { MobileTopBar } from "@/components/MobileTopBar";
 import { RemoteConnectionBar } from "@/components/RemoteConnectionBar";
+import { RunHistory } from "@/components/RunHistory";
 import { SettingsPage } from "@/components/SettingsPage";
 import { ShareExport } from "@/components/ShareExport";
 import { Sidebar } from "@/components/Sidebar";
-import { RunHistory } from "@/components/RunHistory";
-import { TaskDetailPage } from "@/components/TaskDetailPage";
 import { SplashScreen } from "@/components/SplashScreen";
+import { TaskDetailPage } from "@/components/TaskDetailPage";
 import { TelemetryConsentDialog } from "@/components/TelemetryConsentDialog";
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -102,9 +103,7 @@ function App() {
 	// the hook just reports readiness — nothing is installed at runtime.
 	const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
 	const tasksApi = useTasks();
-	const routines = useRoutinesExtension(
-		sidebarView === "tasks" || sidebarView === "history",
-	);
+	const routines = useRoutinesExtension(sidebarView === "tasks" || sidebarView === "history");
 	const selectedTask = tasksApi.tasks.find((t) => t.id === selectedTaskId) ?? null;
 	const handleChangeView = useCallback((view: string) => {
 		setSidebarView(view);
@@ -753,7 +752,12 @@ function App() {
 			dispatch({ type: "RESET" });
 			try {
 				const result = await invoke("load_session", { sessionFile: file });
-				const data = result as { messages: ChatMessage[]; model?: string; provider?: string; cwd?: string };
+				const data = result as {
+					messages: ChatMessage[];
+					model?: string;
+					provider?: string;
+					cwd?: string;
+				};
 				if (data.messages && data.messages.length > 0) {
 					setLoadedSessionMessages(data.messages);
 				}
@@ -768,7 +772,9 @@ function App() {
 					const key = modelKey(data.provider, data.model);
 					if (findModel(models, key)) {
 						setActiveModelId(key);
-						invoke("set_active_model", { model: data.model, provider: data.provider }).catch(() => {});
+						invoke("set_active_model", { model: data.model, provider: data.provider }).catch(
+							() => {},
+						);
 					} else {
 						// Saved model isn't available (e.g. different provider config on
 						// this device). Leave the default model active; the user can
@@ -821,6 +827,10 @@ function App() {
 		<div className="flex h-screen md:gap-2.5 md:p-2.5" style={{ zoom: fontScale }}>
 			{/* Extension UI dialogs (pi-ask-user etc. via ctx.ui) */}
 			<ExtensionUiHost />
+
+			{/* Browser Session (Mode B) live viewport — the "little screen" that
+			    appears when the agent opens a persistent, user-visible browser. */}
+			<BrowserViewport />
 
 			{/* Delete chat confirmation */}
 			<ConfirmDialog
@@ -1022,7 +1032,7 @@ function App() {
 								<div className="text-sm text-muted-foreground">Loading session...</div>
 							</div>
 						) : sidebarView === "tasks" && selectedTask ? (
-						<TaskDetailPage
+							<TaskDetailPage
 								task={selectedTask}
 								error={tasksApi.error}
 								onRunNow={tasksApi.runNow}
@@ -1033,7 +1043,7 @@ function App() {
 									setSidebarView("chats");
 								}}
 								listRuns={tasksApi.listRuns}
-						/>
+							/>
 						) : sidebarView === "tasks" ? (
 							<RunHistory
 								tasks={tasksApi.tasks}
@@ -1081,9 +1091,7 @@ function App() {
 				</main>
 
 				{/* Mobile bottom nav */}
-				{!hideChrome && (
-					<MobileBottomNav view={sidebarView} onChangeView={handleChangeView} />
-				)}
+				{!hideChrome && <MobileBottomNav view={sidebarView} onChangeView={handleChangeView} />}
 			</div>
 		</div>
 	);

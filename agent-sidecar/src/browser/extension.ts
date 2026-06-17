@@ -21,11 +21,15 @@ import {
 	createCloseTool,
 	createExtractTool,
 	createNavigateTool,
+	createSessionTool,
 	createSnapshotTool,
 	createTypeTool,
 } from "./tools.js";
 
 export default async function zosmaBrowser(pi: ExtensionAPI): Promise<void> {
+	// ── Browser Session (Mode B): persistent, user-visible live viewport ──
+	pi.registerTool(createSessionTool());
+
 	// ── Navigation & reading ────────────────────────────────────────────
 	pi.registerTool(createNavigateTool());
 	pi.registerTool(createSnapshotTool());

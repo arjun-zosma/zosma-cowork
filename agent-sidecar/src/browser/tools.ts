@@ -202,6 +202,14 @@ const TypeParams = Type.Object({
 		description: 'Input/field ref from a snapshot (e.g. "e3" or "@e3"), or a CSS selector.',
 	}),
 	text: Type.String({ description: "Text to type into the field." }),
+	richText: Type.Optional(
+		Type.Boolean({
+			description:
+				"Set true for rich-text / contenteditable editors (e.g. LinkedIn comment box, " +
+				'Google Docs, Notion). Clicks to focus, then types via real keystrokes — the ' +
+				"reliable path where plain fill() silently no-ops. Default false.",
+		}),
+	),
 });
 export type TTypeParams = Static<typeof TypeParams>;
 
@@ -212,16 +220,38 @@ export function createTypeTool(): ToolDefinition<typeof TypeParams> {
 		description: [
 			"Type text into an input/textarea by its snapshot ref (e.g. @e3) or a CSS selector.",
 			"Use browser_snapshot to find the field ref first.",
+			"For rich-text editors (contenteditable: LinkedIn/Docs/Notion comment & post boxes),",
+			"pass richText:true — plain typing silently fails on those.",
 		].join("\n"),
 		promptSnippet: "Type text into a form field by ref or selector.",
 		promptGuidelines: [
 			"Snapshot first to get the field ref.",
+			"For contenteditable/rich-text editors, set richText:true.",
 			"To submit, click the submit button (browser_click) after typing.",
 		],
 		parameters: TypeParams,
 		execute: async (_id, params) =>
 			guard(() => {
-				const res = getAgentBrowserExecutor().fill(params.ref, params.text);
+				const exec = getAgentBrowserExecutor();
+				if (params.richText) {
+					// Focus the editor first (click), then type real keystrokes.
+					const clicked = exec.click(params.ref);
+					if (!clicked.success) {
+						return fail(
+							`Could not focus rich-text field ${params.ref}: ${clicked.error ?? "unknown error"}`,
+							{ ref: params.ref, error: clicked.error },
+						);
+					}
+					const typed = exec.keyboardInsertText(params.text);
+					if (!typed.success) {
+						return fail(
+							`Rich-text type failed on ${params.ref}: ${typed.error ?? "unknown error"}`,
+							{ ref: params.ref, error: typed.error },
+						);
+					}
+					return ok(`Typed into rich-text field ${params.ref}.`, typed.data ?? undefined);
+				}
+				const res = exec.fill(params.ref, params.text);
 				if (!res.success) {
 					return fail(`Type failed on ${params.ref}: ${res.error ?? "unknown error"}`, {
 						ref: params.ref,
@@ -312,7 +342,73 @@ export function createCloseTool(): ToolDefinition<typeof CloseParams> {
 	};
 }
 
-// ─── small utils ─────────────────────────────────────────────────────
+// ─── browser_session (Mode B) ──────────────────────────────────
+
+const SessionParams = Type.Object({
+	action: Type.Union(
+		[Type.Literal("start"), Type.Literal("stop"), Type.Literal("status")],
+		{
+			description:
+				'"start" opens the persistent Browser Session (live viewport the user can ' +
+				'watch + take over); "stop" closes it; "status" reports state.',
+		},
+	),
+});
+export type TSessionParams = Static<typeof SessionParams>;
+
+export function createSessionTool(): ToolDefinition<typeof SessionParams> {
+	return {
+		name: "browser_session",
+		label: "Browse: Session",
+		description: [
+			"Open or close the persistent **Browser Session** (Mode B): Cowork's own",
+			"browser with a saved profile, shown live in an in-app viewport the user can",
+			"watch and take control of. Call browser_session({action:'start'}) BEFORE",
+			"navigating when the task needs the user's logged-in accounts (LinkedIn,",
+			"Gmail, CRM, etc.), involves posting/commenting/messaging, or benefits from",
+			"the user seeing/supervising the browser. Once started, the normal",
+			"browser_navigate / _snapshot / _click / _type tools operate on this session.",
+			"For quick, read-only research that needs no login, skip this and use the",
+			"browser_* tools directly (faster, headless).",
+		].join("\n"),
+		promptSnippet:
+			"Start/stop the persistent, user-visible Browser Session for logged-in or supervised tasks.",
+		promptGuidelines: [
+			"Start a Browser Session for anything requiring the user's existing logins.",
+			"The user can log in once inside the viewport; the profile persists across sessions.",
+			"If a site shows a login/MFA/CAPTCHA wall, ask the user to take control in the viewport.",
+		],
+		parameters: SessionParams,
+		execute: async (_id, params) => {
+			// Lazy import avoids loading the Chromium-launch machinery for Mode A.
+			const { BrowserManager } = await import("./browser-manager.js");
+			const mgr = BrowserManager.instance();
+			try {
+				if (params.action === "start") {
+					const { cdpPort } = await mgr.start();
+					return ok(
+						"Browser Session is live. The user can now see the browser in the in-app " +
+							"viewport. Navigate with browser_navigate; if a login wall appears, ask the " +
+							"user to take control in the viewport.",
+						{ state: "connected", cdpPort },
+					);
+				}
+				if (params.action === "stop") {
+					await mgr.stop();
+					return ok("Browser Session closed.", { state: "stopped" });
+				}
+				const s = mgr.getState();
+				return ok(`Browser Session state: ${s.state}.`, s);
+			} catch (err) {
+				return fail(
+					`Browser Session ${params.action} failed: ${(err as Error).message ?? String(err)}`,
+				);
+			}
+		},
+	};
+}
+
+// ─── small utils ───────────────────────────────────────
 
 export function withScheme(url: string): string {
 	if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(url)) return url;

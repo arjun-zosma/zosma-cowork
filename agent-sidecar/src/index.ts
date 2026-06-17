@@ -166,8 +166,10 @@ import piAnthropicMessages from "./vendor/anthropic-messages/extensions/index.js
 // Zosma Office Document Generation extension — registers 8 OfficeCLI tools.
 import zosmaOfficeDocs from "./office-docs/extension.js";
 import zosmaGoogleCalendar from "./google-calendar/extension.js";
-// Zosma Agentic Browser extension — registers 6 agent-browser tools (Phase 0).
+// Zosma Agentic Browser extension — registers agent-browser tools + the
+// persistent Browser Session (Mode B) live-viewport feature.
 import zosmaBrowser from "./browser/extension.js";
+import { setBrowserEventSink } from "./browser/events.js";
 // Vendored forked pi-routines scheduler (#300). Bundled into the sidecar so it
 // works on any machine (no absolute ~/code path). Loaded ONLY by Cowork; the
 // pi CLI never sees it. Source of truth: github.com/zosmaai/pi-routines,
@@ -822,6 +824,15 @@ function resolveUiResponse(response: PendingUiResponse & { id: string }): void {
 function emitUiRequest(payload: Record<string, unknown>): void {
 	send({ type: "event", event: { kind: "ui_request", ...payload } });
 }
+
+// Wire the Browser Session (Mode B) event sink to the stdout transport. The
+// browser manager calls emitBrowserEvent() on lifecycle changes; the Rust layer
+// forwards `kind:"browser_session"` to a global Tauri event the React
+// useBrowserSession hook listens on. Frames never pass through here — the
+// viewport connects directly to agent-browser's localhost stream WebSocket.
+setBrowserEventSink((event) => {
+	send({ type: "event", event });
+});
 
 /**
  * Tell the frontend to dismiss a dialog the sidecar resolved on its own
