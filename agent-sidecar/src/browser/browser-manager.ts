@@ -175,19 +175,25 @@ export class BrowserManager {
 		const dir = profileDir();
 		if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
+		// Default: new-headless (the in-app viewport IS the surface). Some sites
+		// flag headless during login/CAPTCHA, so ZOSMA_BROWSER_HEADED=1 launches a
+		// real window for maximum compatibility (it still mirrors + Take-Controls
+		// in-app via CDP). Take Control works in either mode.
+		const headed = process.env.ZOSMA_BROWSER_HEADED === "1";
 		const args = [
 			`--remote-debugging-port=${MANAGED_CDP_PORT}`,
 			`--user-data-dir=${dir}`,
 			"--no-first-run",
 			"--no-default-browser-check",
 			"--disable-features=Translate",
-			// Headless: the in-app viewport is the window. New headless mode keeps
-			// a real compositor so screencast frames render correctly.
-			"--headless=new",
 			"--window-size=1280,720",
 		];
-		if (platform() === "linux") {
-			// Harmless on X11; required for a visible window under Wayland (debug).
+		if (!headed) {
+			// New headless mode keeps a real compositor so screencast frames render.
+			args.push("--headless=new");
+		}
+		if (platform() === "linux" && headed) {
+			// Required to surface a real window under Wayland.
 			args.push("--ozone-platform=wayland");
 		}
 

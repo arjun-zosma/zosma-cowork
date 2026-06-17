@@ -880,6 +880,44 @@ async fn set_active_model(
     .await
 }
 
+/// Take Control: forward a human input event from the in-app Browser Session
+/// viewport into the managed browser. `action` is click|move|wheel|type|press;
+/// coordinates are viewport pixels. Request/response so the UI can surface
+/// failures, with a short timeout to keep typing/clicking feeling instant.
+#[tauri::command]
+async fn browser_input(
+    action: String,
+    x: Option<f64>,
+    y: Option<f64>,
+    dy: Option<f64>,
+    dx: Option<f64>,
+    text: Option<String>,
+    key: Option<String>,
+    s: State<'_, AppState>,
+) -> Result<Value, String> {
+    let id = format!("bi-{}", uuid_v4());
+    let mut msg = serde_json::json!({ "type": "browser_input", "id": id, "action": action });
+    if let Some(v) = x {
+        msg["x"] = serde_json::json!(v);
+    }
+    if let Some(v) = y {
+        msg["y"] = serde_json::json!(v);
+    }
+    if let Some(v) = dy {
+        msg["dy"] = serde_json::json!(v);
+    }
+    if let Some(v) = dx {
+        msg["dx"] = serde_json::json!(v);
+    }
+    if let Some(v) = text {
+        msg["text"] = serde_json::Value::String(v);
+    }
+    if let Some(v) = key {
+        msg["key"] = serde_json::Value::String(v);
+    }
+    scmd_r(&s, &msg, std::time::Duration::from_secs(10)).await
+}
+
 #[tauri::command]
 async fn save_auth_key(
     provider: String,
@@ -2318,6 +2356,7 @@ pub fn run() {
             clear_queue,
             send_ui_response,
             set_active_model,
+            browser_input,
             save_auth_key,
             list_custom_providers,
             save_custom_provider,

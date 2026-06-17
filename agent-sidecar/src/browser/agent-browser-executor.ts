@@ -277,6 +277,50 @@ export class AgentBrowserExecutor {
 		return this.run<StreamStatusData>(["stream", "status"]);
 	}
 
+	// ─── Take Control: raw input forwarding (CDP Input domain) ────────
+	// These let the human drive the managed browser from the in-app viewport
+	// (e.g. to log in / solve a CAPTCHA), then hand control back to the agent.
+	// Short timeouts: input ops are instant and we want a snappy feel.
+
+	mouseMove(x: number, y: number): AgentBrowserResult<unknown> {
+		return this.run(["mouse", "move", String(Math.round(x)), String(Math.round(y))], {
+			timeoutMs: 5_000,
+		});
+	}
+
+	mouseDown(button: "left" | "right" | "middle" = "left"): AgentBrowserResult<unknown> {
+		return this.run(["mouse", "down", button], { timeoutMs: 5_000 });
+	}
+
+	mouseUp(button: "left" | "right" | "middle" = "left"): AgentBrowserResult<unknown> {
+		return this.run(["mouse", "up", button], { timeoutMs: 5_000 });
+	}
+
+	mouseWheel(dy: number, dx = 0): AgentBrowserResult<unknown> {
+		return this.run(["mouse", "wheel", String(Math.round(dy)), String(Math.round(dx))], {
+			timeoutMs: 5_000,
+		});
+	}
+
+	/** Move to (x,y) and left-click there — one logical click for Take Control. */
+	clickAt(x: number, y: number): AgentBrowserResult<unknown> {
+		const move = this.mouseMove(x, y);
+		if (!move.success) return move;
+		const down = this.mouseDown("left");
+		if (!down.success) return down;
+		return this.mouseUp("left");
+	}
+
+	/** Type printable text via real key events into the focused element. */
+	keyboardType(text: string): AgentBrowserResult<unknown> {
+		return this.run(["keyboard", "type", text], { timeoutMs: 8_000 });
+	}
+
+	/** Press a key or combo (Enter, Tab, Backspace, Control+a, …). */
+	press(key: string): AgentBrowserResult<unknown> {
+		return this.run(["press", key], { timeoutMs: 5_000 });
+	}
+
 	/** Current page URL + title (for the viewport URL bar). */
 	pageInfo(): AgentBrowserResult<{ url: string }> {
 		return this.run<{ url: string }>(["get", "url"]);

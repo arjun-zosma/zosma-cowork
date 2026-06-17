@@ -663,6 +663,24 @@ interface UiResponseCommand {
 	cancelled?: boolean;
 }
 
+/**
+ * Take Control input forwarding (Browser Session / Mode B). The frontend
+ * viewport translates pointer/keyboard events into viewport coordinates and
+ * sends them here; the sidecar replays them into the managed browser via
+ * agent-browser's CDP input commands. Coordinates are in viewport pixels.
+ */
+interface BrowserInputCommand {
+	type: "browser_input";
+	id: string;
+	action: "click" | "move" | "wheel" | "type" | "press";
+	x?: number;
+	y?: number;
+	dy?: number;
+	dx?: number;
+	text?: string;
+	key?: string;
+}
+
 type Command =
 	| InitCommand
 	| GetModelsCommand
@@ -728,7 +746,8 @@ type Command =
 	| StartRemoteCommand
 	| StopRemoteCommand
 	| GetRemoteStatusCommand
-	| UiResponseCommand;
+	| UiResponseCommand
+	| BrowserInputCommand;
 
 // ---------------------------------------------------------------------------
 // Logger (stderr — never interferes with stdout protocol)
@@ -1936,6 +1955,52 @@ async function main() {
 				// ── init ───────────────────────────────────────────────────
 				case "init": {
 					await initAgent(cmd.zosmaDir ?? defaultZosmaDir(), cmd.workspace);
+					break;
+				}
+
+				// ── browser_input (Take Control / Mode B) ──────────────────
+				case "browser_input": {
+					try {
+						const { getAgentBrowserExecutor } = await import(
+							"./browser/agent-browser-executor.js"
+						);
+						const exec = getAgentBrowserExecutor();
+						let res: { success: boolean; error: string | null };
+						switch (cmd.action) {
+							case "click":
+								res = exec.clickAt(cmd.x ?? 0, cmd.y ?? 0);
+								break;
+							case "move":
+								res = exec.mouseMove(cmd.x ?? 0, cmd.y ?? 0);
+								break;
+							case "wheel":
+								res = exec.mouseWheel(cmd.dy ?? 0, cmd.dx ?? 0);
+								break;
+							case "type":
+								res = exec.keyboardType(cmd.text ?? "");
+								break;
+							case "press":
+								res = exec.press(cmd.key ?? "");
+								break;
+							default:
+								res = { success: false, error: `unknown action: ${cmd.action}` };
+						}
+						if (res.success) {
+							send({ type: "result", id: cmd.id, data: { ok: true } });
+						} else {
+							send({
+								type: "error",
+								id: cmd.id,
+								message: res.error ?? "browser_input failed",
+							});
+						}
+					} catch (err) {
+						send({
+							type: "error",
+							id: cmd.id,
+							message: (err as Error).message ?? String(err),
+						});
+					}
 					break;
 				}
 
