@@ -1,6 +1,8 @@
 import { usePasteDetection } from "@/hooks/usePasteDetection";
+import { useFileMention } from "@/hooks/useFileMention";
 import { trackEvent } from "@/lib/telemetry";
-import type { ModelInfo } from "@/types";
+import { findModel } from "@/lib/model-key";
+import type { FileAttachment, ModelInfo } from "@/types";
 import type { Command } from "@/types/commands";
 import { ArrowUp, Mic, Paperclip, Square, X } from "lucide-react";
 import {
@@ -13,6 +15,8 @@ import {
 	useState,
 } from "react";
 import { CommandPalette, useFilteredCommands } from "./CommandPalette";
+import { FileMentionPopup } from "./FileMentionPopup";
+import { FilePreviewChip } from "./FilePreviewChip";
 import { ModelSelector } from "./ModelSelector";
 
 /** Split a raw composer value starting with `/` into command query + args. */
@@ -23,6 +27,18 @@ export function parseSlashInput(value: string): { query: string; args: string } 
 	const spaceIdx = firstLine.indexOf(" ");
 	if (spaceIdx === -1) return { query: firstLine, args: "" };
 	return { query: firstLine.slice(0, spaceIdx), args: firstLine.slice(spaceIdx + 1) };
+}
+
+function calcMentionAnchor(
+	shell: HTMLElement | null,
+	_textarea: HTMLTextAreaElement | null,
+): { top: number; left: number } | null {
+	if (!shell) return null;
+	const rect = shell.getBoundingClientRect();
+	return {
+		top: rect.top - 8,
+		left: rect.left + 16,
+	};
 }
 
 interface MessageInputProps {
@@ -81,6 +97,10 @@ interface MessageInputProps {
 	 * nothing accidentally fires.
 	 */
 	onEditQueue?: () => void;
+	/** Files dropped onto the chat area (drag-and-drop) */
+	pendingDropFiles?: FileAttachment[];
+	/** Incrementing counter to trigger re-processing of pendingDropFiles */
+	pendingDropNonce?: number;
 }
 
 export interface MessageInputHandle {
@@ -107,14 +127,29 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(
 			onFollowUp,
 			queue,
 			onEditQueue,
+			pendingDropFiles,
+			pendingDropNonce,
 		},
 		ref,
 	) => {
 		const [text, setText] = useState("");
 		const [commandIndex, setCommandIndex] = useState(0);
-		const [attachedFiles, setAttachedFiles] = useState<{ path: string; name: string }[]>([]);
+		const [attachedFiles, setAttachedFiles] = useState<FileAttachment[]>([]);
 		const [isListening, setIsListening] = useState(false);
+		const [mentionSelectedIndex, setMentionSelectedIndex] = useState(0);
+		const mention = useFileMention();
 		const { pastedImages, pasteHandler, clearImages } = usePasteDetection();
+		const currentModel = useMemo(
+			() => (models && currentModelId ? findModel(models, currentModelId) : undefined),
+			[models, currentModelId],
+		);
+		const modelSupportsImages = currentModel?.input?.includes("image") ?? true;
+		const hasImageAttachments = useMemo(
+			() =>
+				attachedFiles.some((f) => f.mimeType.startsWith("image/")) ||
+				pastedImages.length > 0,
+			[attachedFiles, pastedImages],
+		);
 		const textareaRef = useRef<HTMLTextAreaElement>(null);
 		const shellRef = useRef<HTMLDivElement>(null);
 		const recognitionRef = useRef<SpeechRecognition | null>(null);
@@ -122,6 +157,20 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(
 		useImperativeHandle(ref, () => ({
 			focus: () => textareaRef.current?.focus(),
 		}));
+
+		// Accept files dropped onto the chat area (nonce triggers re-processing)
+		// biome-ignore lint/correctness/useExhaustiveDependencies: only react to new drops
+		useEffect(() => {
+			if (pendingDropFiles && pendingDropFiles.length > 0) {
+				setAttachedFiles((prev) => [...prev, ...pendingDropFiles]);
+			}
+		}, [pendingDropNonce]);
+
+		// Reset mention selection when results change
+		// biome-ignore lint/correctness/useExhaustiveDependencies: reset on results change
+		useEffect(() => {
+			setMentionSelectedIndex(0);
+		}, [mention.results.length]);
 
 		// Load an external draft (prompt template) into the composer for editing.
 		// biome-ignore lint/correctness/useExhaustiveDependencies: only react to a new draft nonce
@@ -196,11 +245,34 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(
 				});
 				if (!result) return;
 				const paths = Array.isArray(result) ? result : [result];
-				const files = paths.map((p) => ({
-					path: p,
-					name: p.split("/").pop() ?? p.split("\\").pop() ?? p,
-				}));
-				setAttachedFiles(files);
+				const { invoke } = await import("@tauri-apps/api/core");
+				const files: FileAttachment[] = [];
+				for (const p of paths) {
+					try {
+						const info = await invoke<{
+							name: string;
+							size: number;
+							mime_type: string;
+						}>("get_file_info", { path: p });
+						files.push({
+							path: p,
+							name: info.name,
+							size: info.size,
+							mimeType: info.mime_type,
+							source: "upload",
+						});
+					} catch {
+						files.push({
+							path: p,
+							name: p.split("/").pop() ?? p.split("\\").pop() ?? p,
+							size: 0,
+							mimeType: "application/octet-stream",
+							source: "upload",
+						});
+					}
+				}
+				// Stack: append to existing files instead of replacing
+				setAttachedFiles((prev) => [...prev, ...files]);
 				trackEvent("file_picked", { count: files.length });
 			} catch {
 				// Dialog plugin not available (e.g., browser/test env)
@@ -286,6 +358,72 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(
 		const queueCount = (queue?.steering.length ?? 0) + (queue?.followUp.length ?? 0);
 
 		function handleKeyDown(e: React.KeyboardEvent) {
+			// Mention popup is active: handle navigation and selection
+			if (mention.state === "active" && mention.results.length > 0) {
+				if (e.key === "ArrowDown") {
+					e.preventDefault();
+					setMentionSelectedIndex((i) =>
+						(i + 1) % mention.results.length,
+					);
+					return;
+				}
+				if (e.key === "ArrowUp") {
+					e.preventDefault();
+					setMentionSelectedIndex((i) =>
+						(i - 1 + mention.results.length) % mention.results.length,
+					);
+					return;
+				}
+				if (e.key === "Enter" && !e.shiftKey) {
+					e.preventDefault();
+					const entry = mention.results[mentionSelectedIndex];
+					if (entry && !entry.isDirectory) {
+						mention.selectFile(entry);
+						const before = text.slice(0, mention.triggerPosition ?? 0);
+						setText(`${before}@${entry.name} `);
+						setAttachedFiles((prev) => [
+							...prev,
+							{
+								path: entry.path,
+								name: entry.name,
+								size: 0,
+								mimeType: "application/octet-stream",
+								source: "mention",
+							},
+						]);
+						setMentionSelectedIndex(0);
+					}
+					return;
+				}
+				if (e.key === "Escape") {
+					e.preventDefault();
+					mention.cancel();
+					setMentionSelectedIndex(0);
+					return;
+				}
+				if (e.key === "Tab") {
+					e.preventDefault();
+					const entry = mention.results[mentionSelectedIndex] ?? mention.results[0];
+					if (entry && !entry.isDirectory) {
+						mention.selectFile(entry);
+						const before = text.slice(0, mention.triggerPosition ?? 0);
+						setText(`${before}@${entry.name} `);
+						setAttachedFiles((prev) => [
+							...prev,
+							{
+								path: entry.path,
+								name: entry.name,
+								size: 0,
+								mimeType: "application/octet-stream",
+								source: "mention",
+							},
+						]);
+						setMentionSelectedIndex(0);
+					}
+					return;
+				}
+			}
+
 			// Palette is open: its keys take precedence over send/steer/newline.
 			if (paletteOpen) {
 				if (e.key === "ArrowDown") {
@@ -382,11 +520,49 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(
 						/>
 					)}
 
+					{/* File mention popup */}
+					{mention.state === "active" && (
+						<FileMentionPopup
+							entries={mention.results}
+							selectedIndex={mentionSelectedIndex}
+							query={mention.query}
+							breadcrumb={mention.breadcrumb}
+							loading={mention.loading}
+							onSelectIndex={setMentionSelectedIndex}
+							onSelect={(entry) => {
+								if (!entry.isDirectory) {
+									mention.selectFile(entry);
+									const before = text.slice(0, mention.triggerPosition ?? 0);
+									setText(`${before}@${entry.name} `);
+									// Add to attached files for chip rendering
+									setAttachedFiles((prev) => [
+										...prev,
+										{
+											path: entry.path,
+											name: entry.name,
+											size: 0,
+											mimeType: entry.isDirectory
+												? "inode/directory"
+												: "application/octet-stream",
+											source: "mention",
+										},
+									]);
+									setMentionSelectedIndex(0);
+								}
+							}}
+							anchorRect={calcMentionAnchor(shellRef.current, textareaRef.current)}
+						/>
+					)}
+
 					{/* Textarea */}
 					<textarea
 						ref={textareaRef}
 						value={text}
-						onChange={(e) => setText(e.target.value)}
+						onChange={(e) => {
+							const val = e.target.value;
+							setText(val);
+							mention.onInput(val, e.target.selectionStart ?? val.length);
+						}}
 						onKeyDown={handleKeyDown}
 						onPaste={(e) => pasteHandler(e.nativeEvent)}
 						placeholder={placeholder}
@@ -447,24 +623,31 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(
 					{attachedFiles.length > 0 && (
 						<div className="flex flex-wrap gap-1.5 px-4 pb-1.5">
 							{attachedFiles.map((file) => (
-								<span
+								<FilePreviewChip
 									key={file.path}
-									className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs max-w-40 bg-muted text-foreground"
-									title={file.path}
-								>
-									<span className="truncate">
-										{file.name.length > 30 ? `${file.name.slice(0, 27)}…` : file.name}
-									</span>
-									<button
-										type="button"
-										onClick={() => removeFile(file.path)}
-										className="shrink-0 rounded p-0.5 hover:opacity-70"
-										aria-label={`Remove ${file.name}`}
-									>
-										<X size={12} />
-									</button>
-								</span>
+									path={file.path}
+									name={file.name}
+									size={file.size}
+									mimeType={file.mimeType}
+									onRemove={removeFile}
+								/>
 							))}
+						</div>
+					)}
+
+					{/* Image capability warning */}
+					{!modelSupportsImages && hasImageAttachments && (
+						<div className="px-4 pb-1.5">
+							<p
+								className="text-[11px] leading-tight flex items-center gap-1.5"
+								style={{ color: "hsl(var(--warning))" }}
+							>
+								<span>⚠</span>
+								<span>
+									Your current model does not support images.
+									{currentModel && ` Selected: ${currentModel.name}.`}
+								</span>
+							</p>
 						</div>
 					)}
 
