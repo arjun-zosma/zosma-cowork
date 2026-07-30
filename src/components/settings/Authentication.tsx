@@ -8,6 +8,7 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ClaudeIcon, GeminiIcon, GitHubIcon, OpenAIIcon } from "../BrandIcons";
 import { CustomProviderRow } from "./CustomProviderRow";
+import { ZosmaStatus } from "./ZosmaStatus";
 
 // onShowKeyEntry kept for API compat but no longer used — key entry is inline
 interface Props {
@@ -94,6 +95,9 @@ export function Authentication({ onShowKeyEntry: _onShowKeyEntry }: Props) {
 
 				{/* Inline API key row */}
 				<ApiKeyRow authStatus={authStatus} onSaved={refreshStatus} />
+
+				{/* Zosma Router managed provider */}
+				<ZosmaStatus authStatus={authStatus as Record<string, unknown>} onChange={refreshStatus} />
 
 				{/* Custom OpenAI-compatible endpoint (issue #207) */}
 				<CustomProviderRow onChange={refreshStatus} />

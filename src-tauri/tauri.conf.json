@@ -29,6 +29,11 @@
     }
   },
   "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["ai.zosma.cowork"]
+      }
+    },
     "shell": {
       "open": "^https?://"
     },

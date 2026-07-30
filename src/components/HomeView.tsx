@@ -21,17 +21,21 @@ import {
 	EyeOff,
 	Loader2,
 	Lock,
+	LogIn,
+	XCircle,
 	Zap,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ClaudeIcon, GitHubIcon, OpenAIIcon } from "./BrandIcons";
 import { ProviderAuthSection } from "./ProviderAuthSection";
 import { CustomProviderRow } from "./settings/CustomProviderRow";
+import { useZosmaAuth } from "../hooks/useZosmaAuth";
 
 interface OnboardingProps {
 	onComplete: (provider: string, apiKey: string) => Promise<void>;
 	onSkipToSettings?: () => void;
 	onDismiss?: () => void;
+	onZosmaComplete?: () => void;
 	hasSubscription?: boolean;
 }
 
@@ -65,9 +69,27 @@ export function HomeView({
 	onComplete,
 	onSkipToSettings,
 	onDismiss,
+	onZosmaComplete,
 	hasSubscription,
 }: OnboardingProps) {
 	const [step, setStep] = useState<Step>("splash");
+
+	const {
+		phase: zosmaPhase,
+		error: zosmaError,
+		start: zosmaStart,
+		cancel: zosmaCancel,
+	} = useZosmaAuth({
+		onComplete: onZosmaComplete,
+	});
+
+	// ponytail: gate Zosma card behind env var until backend staging is verified.
+	// Remove check after staging auth.zosma.ai + router.zosma.ai are live.
+	const zosmaEnabled =
+		typeof import.meta.env.VITE_ZOSMA_AUTH_ENABLED !== "undefined"
+			? import.meta.env.VITE_ZOSMA_AUTH_ENABLED === "true"
+			: false;
+
 	const [apiKey, setApiKey] = useState("");
 	const [showKey, setShowKey] = useState(false);
 	const [saving, setSaving] = useState(false);
@@ -290,6 +312,79 @@ export function HomeView({
 				<p className="text-xs mb-5 text-muted-foreground">Pick one option below.</p>
 
 				<div className="space-y-4">
+					{/* ═══ Zosma Router Auth (recommended) — gated by VITE_ZOSMA_AUTH_ENABLED ═══ */}
+					{zosmaEnabled && (
+					<div className="rounded-xl border p-4 space-y-3 border-border">
+						<div className="flex items-center gap-2">
+							<LogIn className="w-4 h-4 text-primary" />
+							<span className="text-sm font-medium text-foreground">
+								Continue with Zosma
+							</span>
+							<span className="text-[10px] px-1.5 py-0.5 rounded font-medium ml-auto bg-primary/10 text-primary">
+								recommended
+							</span>
+						</div>
+						<p className="text-xs text-muted-foreground">
+							Sign in with Google. Cowork sets up your available Zosma models automatically.
+						</p>
+
+						{zosmaPhase === "done" && (
+							<div className="text-xs px-3 py-2 rounded-md bg-primary/10 text-primary">
+								Connected! Setting up your experience…
+							</div>
+						)}
+
+						{zosmaPhase === "done" ? null : zosmaPhase === "starting" || zosmaPhase === "completing" ? (
+							<button
+								type="button"
+								disabled
+								className="w-full px-4 py-2 rounded-lg text-sm font-medium transition-all opacity-60 cursor-not-allowed bg-primary text-primary-foreground flex items-center justify-center gap-2"
+							>
+								<Loader2 className="w-3.5 h-3.5 animate-spin" />
+								{zosmaPhase === "starting" ? "Starting…" : "Setting up your models…"}
+							</button>
+						) : zosmaPhase === "waiting_browser" ? (
+							<div className="space-y-2">
+								<div className="flex items-center gap-2">
+									<Loader2 className="w-3.5 h-3.5 animate-spin shrink-0 text-primary" />
+									<span className="text-xs font-medium text-foreground">
+										Complete sign-in in your browser
+									</span>
+								</div>
+								<button
+									type="button"
+									onClick={zosmaCancel}
+									className="w-full px-4 py-1.5 rounded-lg text-xs font-medium transition-all hover:opacity-90 cursor-pointer focus-visible:ring-2 focus-visible:ring-ring bg-muted/50 text-muted-foreground"
+								>
+									Cancel
+								</button>
+							</div>
+						) : zosmaPhase === "error" ? (
+							<div className="space-y-2">
+								<p className="text-xs flex items-center gap-1 text-destructive">
+									<XCircle className="w-3 h-3 shrink-0" />
+									{zosmaError}
+								</p>
+								<button
+									type="button"
+									onClick={zosmaStart}
+									className="w-full px-4 py-2 rounded-lg text-sm font-medium transition-all hover:opacity-90 cursor-pointer focus-visible:ring-2 focus-visible:ring-ring bg-primary text-primary-foreground"
+								>
+									Retry
+								</button>
+							</div>
+						) : (
+							<button
+								type="button"
+								onClick={zosmaStart}
+								className="w-full px-4 py-2 rounded-lg text-sm font-medium transition-all hover:opacity-90 cursor-pointer focus-visible:ring-2 focus-visible:ring-ring bg-primary text-primary-foreground"
+							>
+								Continue with Google
+							</button>
+						)}
+					</div>
+					)}
+
 					{/* ═══ API Key quick-start ═══ */}
 					<div className="rounded-xl border p-4 space-y-3 border-border">
 						<div className="flex items-center gap-2">

@@ -80,6 +80,16 @@ import {
 	handleSaveInstructions,
 } from "./handlers/settings.js";
 
+// ── Zosma Router Auth handlers ─────────────────────────────────────────────
+import {
+	handleStartZosmaAuth,
+	handleCompleteZosmaAuth,
+	handleCancelZosmaAuth,
+	handleRefreshZosmaModels,
+	handleGetZosmaUsage,
+	handleDisconnectZosmaAuth,
+} from "./handlers/zosma-auth.js";
+
 // ── Types ──────────────────────────────────────────────────────────────────
 import { send, log, logWarn } from "../protocol.js";
 import type { Command } from "./types.js";
@@ -346,6 +356,34 @@ export function createHandler(deps: HandlerDependencies): (cmd: Command) => Prom
 
 			case "save_instructions":
 				await handleSaveInstructions(deps, cmd as any);
+				break;
+
+			// ═══════════════════════════════════════════════════════════════
+			// Zosma Router Auth
+			// ═══════════════════════════════════════════════════════════════
+
+			case "start_zosma_auth":
+				await handleStartZosmaAuth(deps, cmd as any);
+				break;
+
+			case "complete_zosma_auth":
+				await handleCompleteZosmaAuth(deps, cmd as any);
+				break;
+
+			case "cancel_zosma_auth":
+				await handleCancelZosmaAuth(deps, cmd as any);
+				break;
+
+			case "refresh_zosma_models":
+				await handleRefreshZosmaModels(deps, cmd as any);
+				break;
+
+			case "get_zosma_usage":
+				await handleGetZosmaUsage(deps, cmd as any);
+				break;
+
+			case "disconnect_zosma_auth":
+				await handleDisconnectZosmaAuth(deps, cmd as any);
 				break;
 
 			default:
