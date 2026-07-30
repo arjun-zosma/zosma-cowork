@@ -82,7 +82,7 @@ function App() {
 	const [skipOnboarding, setSkipOnboarding] = useState(false);
 	// Router setup screen: shown after splash if zosma-router device auth
 	// hasn't been completed yet (zosmaai-router missing from apiKeyProviders).
-	const zosmaEnabled = import.meta.env.VITE_ZOSMA_AUTH_ENABLED === "true";
+	const zosmaEnabled = import.meta.env.VITE_ZOSMA_AUTH_ENABLED !== "false";
 	const [needsRouterSetup, setNeedsRouterSetup] = useState(false);
 	const [, setSidebarView] = useState("chats");
 	const handleChangeView = useCallback((view: string) => {
@@ -153,7 +153,7 @@ function App() {
 		telemetryUndecided || (!sidecarReady && (authLoading || hasCredentials !== true));
 
 	// After sidecar is ready, check if Zosma Router device auth is done.
-	// If VITE_ZOSMA_AUTH_ENABLED is false (production default), skip the check.
+	// If VITE_ZOSMA_AUTH_ENABLED is explicitly false, skip router check.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: invoke/isTauri/setNeedsRouterSetup are stable; we only want to re-check when initializing flips
 	useEffect(() => {
 		if (!isTauri() || !zosmaEnabled || initializing || authLoading) return;

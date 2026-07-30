@@ -87,8 +87,10 @@ export function HomeView({
 	// Remove check after staging auth.zosma.ai + router.zosma.ai are live.
 	const zosmaEnabled =
 		typeof import.meta.env.VITE_ZOSMA_AUTH_ENABLED !== "undefined"
-			? import.meta.env.VITE_ZOSMA_AUTH_ENABLED === "true"
-			: false;
+			? import.meta.env.VITE_ZOSMA_AUTH_ENABLED === "false"
+				? false
+				: true
+			: true;
 
 	const [apiKey, setApiKey] = useState("");
 	const [showKey, setShowKey] = useState(false);
