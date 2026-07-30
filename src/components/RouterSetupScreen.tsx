@@ -1,11 +1,9 @@
 /**
- * RouterSetupScreen — first-run Zosma Router configuration.
+ * RouterSetupScreen — first-run Zosma Router URL configuration.
  *
- * Shown after splash when the router hasn't been connected yet.
- * 1. User enters auth + router base URLs
- * 2. Calls configure_router to save them in the sidecar
- * 3. Then runs the Zosma device auth flow
- * 4. On completion, fires onDone to let the app proceed
+ * Shown after splash when zosmaai-router isn't in apiKeyProviders yet.
+ * Just saves the base URLs and dismisses — the actual Sign in with Zosma
+ * flow happens in HomeView via useZosmaAuth (which handles deep-link).
  */
 
 import { invoke } from "@tauri-apps/api/core";
@@ -22,44 +20,22 @@ const DEFAULT_ROUTER_URL = "http://localhost:3000/v1";
 export function RouterSetupScreen({ onDone }: Props) {
 	const [authBaseUrl, setAuthBaseUrl] = useState(DEFAULT_AUTH_URL);
 	const [routerBaseUrl, setRouterBaseUrl] = useState(DEFAULT_ROUTER_URL);
-	const [phase, setPhase] = useState<"idle" | "saving" | "authorizing" | "done" | "error">("idle");
+	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
-	const handleSaveAndConnect = async () => {
+	const handleSave = async () => {
 		setError(null);
-		setPhase("saving");
-
+		setSaving(true);
 		try {
 			if (isTauri()) {
-				// 1. Configure URLs on the sidecar
 				await invoke("configure_router", {
 					authBaseUrl: authBaseUrl.replace(/\/+$/, ""),
 					routerBaseUrl: routerBaseUrl.replace(/\/+$/, ""),
 				});
 			}
-
-			setPhase("authorizing");
-
-			// 2. Start device auth flow — opens browser
-			const result = await invoke<{ authorizationUrl: string }>("start_zosma_auth");
-			if (!result.authorizationUrl) {
-				setPhase("error");
-				setError("Auth server returned no authorization URL");
-				return;
-			}
-
-			// 3. Open system browser
-			await invoke("open_url", { url: result.authorizationUrl });
-
-			// The deep-link listener in useZosmaAuth handles the callback.
-			// For the setup screen we rely on the auth completing via deep-link
-			// and config-reload event.
-			setPhase("done");
-
-			// Short delay then proceed
-			setTimeout(() => onDone(), 500);
+			onDone();
 		} catch (err: unknown) {
-			setPhase("error");
+			setSaving(false);
 			setError(err instanceof Error ? err.message : String(err));
 		}
 	};
@@ -72,7 +48,7 @@ export function RouterSetupScreen({ onDone }: Props) {
 						Connect Zosma Router
 					</h1>
 					<p className="text-sm text-muted-foreground">
-						Enter your Zosma Router URLs to connect. These are saved for future sessions.
+						Enter your Zosma Router URLs to connect. Then sign in with Zosma on the next screen.
 					</p>
 				</div>
 
@@ -88,7 +64,7 @@ export function RouterSetupScreen({ onDone }: Props) {
 							onChange={(e) => setAuthBaseUrl(e.target.value)}
 							className="w-full px-3 py-2 rounded-lg border border-border bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
 							placeholder="http://localhost:3000"
-							disabled={phase !== "idle"}
+							disabled={saving}
 						/>
 					</div>
 
@@ -103,7 +79,7 @@ export function RouterSetupScreen({ onDone }: Props) {
 							onChange={(e) => setRouterBaseUrl(e.target.value)}
 							className="w-full px-3 py-2 rounded-lg border border-border bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
 							placeholder="http://localhost:3000/v1"
-							disabled={phase !== "idle"}
+							disabled={saving}
 						/>
 					</div>
 				</div>
@@ -116,15 +92,11 @@ export function RouterSetupScreen({ onDone }: Props) {
 
 				<button
 					type="button"
-					onClick={handleSaveAndConnect}
-					disabled={phase === "saving" || phase === "authorizing"}
+					onClick={handleSave}
+					disabled={saving}
 					className="w-full py-2.5 px-4 rounded-lg bg-primary text-primary-foreground font-medium text-sm hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
 				>
-					{phase === "saving"
-						? "Saving configuration…"
-						: phase === "authorizing"
-							? "Opening browser…"
-							: "Save & Connect"}
+					{saving ? "Saving…" : "Save & Continue"}
 				</button>
 			</div>
 		</div>
