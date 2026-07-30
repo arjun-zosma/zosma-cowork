@@ -15,17 +15,54 @@ import { generateCodeVerifier, generateState, sha256Base64url } from "./crypto.j
 import { deletePending, loadPending, savePending } from "./state.js";
 
 // ponytail: mutable defaults for test injection. Set via setZosmaAuthConfig.
-// Production uses these hardcoded values. Tests override with local URLs.
-let authBaseUrl = "https://auth.zosma.ai";
-let routerBaseUrl = "https://router.zosma.ai/v1";
+// Production uses these hardcoded values. Override via env vars or setZosmaAuthConfig.
+let authBaseUrl = process.env.ZOSMA_AUTH_BASE_URL || "https://auth.zosma.ai";
+let routerBaseUrl = process.env.ZOSMA_ROUTER_BASE_URL || "https://router.zosma.ai/v1";
 let fetchImpl: typeof globalThis.fetch = globalThis.fetch;
 const DEVICE_ID_FILE = "zosma-device-id.txt";
+const ROUTER_CONFIG_FILE = "zosma-router-config.json";
 const TIMEOUT_MS = 10_000;
 
 /**
  * Override base URLs and fetch implementation for testing.
  * Pass undefined to keep current value.
  */
+/**
+ * Load router config from piDir if it exists.
+ * Called at the start of each zosma-auth operation so file-based config
+ * persists across sidecar restarts.
+ */
+function loadRouterConfig(piDir: string): void {
+	const file = join(piDir, ROUTER_CONFIG_FILE);
+	try {
+		if (existsSync(file)) {
+			const raw = readFileSync(file, "utf-8");
+			const config = JSON.parse(raw) as { authBaseUrl?: string; routerBaseUrl?: string };
+			// Env vars take precedence over file config
+			if (!process.env.ZOSMA_AUTH_BASE_URL && config.authBaseUrl) authBaseUrl = config.authBaseUrl;
+			if (!process.env.ZOSMA_ROUTER_BASE_URL && config.routerBaseUrl) routerBaseUrl = config.routerBaseUrl;
+		}
+	} catch {
+		// ignore corrupt config
+	}
+}
+
+/**
+ * Save router config to piDir so it persists across sidecar restarts.
+ */
+export function saveRouterConfig(piDir: string, config: { authBaseUrl: string; routerBaseUrl: string }): void {
+	const file = join(piDir, ROUTER_CONFIG_FILE);
+	mkdirSync(piDir, { recursive: true });
+	writeFileSync(file, JSON.stringify(config, null, 2), "utf-8");
+}
+
+/**
+ * Get current router config values.
+ */
+export function getRouterConfig(): { authBaseUrl: string; routerBaseUrl: string } {
+	return { authBaseUrl, routerBaseUrl };
+}
+
 export function setZosmaAuthConfig(config: {
 	authBaseUrl?: string;
 	routerBaseUrl?: string;
@@ -436,6 +473,7 @@ export async function refreshZosmaModels(
 export async function getZosmaUsage(
 	piDir: string,
 ): Promise<{ plan?: string; used?: number; limit?: number; resetAt?: string }> {
+	loadRouterConfig(piDir);
 	const modelsPath = join(piDir, "models.json");
 	const provider = readProviderEntry(modelsPath, "zosmaai-router");
 	if (!provider?.apiKey) {

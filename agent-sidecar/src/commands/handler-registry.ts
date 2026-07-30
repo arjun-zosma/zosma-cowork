@@ -88,6 +88,7 @@ import {
 	handleRefreshZosmaModels,
 	handleGetZosmaUsage,
 	handleDisconnectZosmaAuth,
+	handleConfigureRouter,
 } from "./handlers/zosma-auth.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -384,6 +385,10 @@ export function createHandler(deps: HandlerDependencies): (cmd: Command) => Prom
 
 			case "disconnect_zosma_auth":
 				await handleDisconnectZosmaAuth(deps, cmd as any);
+				break;
+
+			case "configure_router":
+				await handleConfigureRouter(deps, cmd as any);
 				break;
 
 			default:

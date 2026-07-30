@@ -2,6 +2,7 @@ import { ChatView } from "@/chat/ChatView";
 import { log } from "./lib/log";
 import { HelpDialog } from "@/components/HelpDialog";
 import { HomeView } from "@/components/HomeView";
+import { RouterSetupScreen } from "@/components/RouterSetupScreen";
 import { SettingsPage } from "@/components/SettingsPage";
 import { Sidebar } from "@/components/Sidebar";
 import { SplashScreen } from "@/components/SplashScreen";
@@ -79,6 +80,10 @@ function App() {
 	// User explicitly chose "configure in Settings" — bypass the Connect
 	// modal even without stored credentials.
 	const [skipOnboarding, setSkipOnboarding] = useState(false);
+	// Router setup screen: shown after splash if zosma-router device auth
+	// hasn't been completed yet (zosmaai-router missing from apiKeyProviders).
+	const zosmaEnabled = import.meta.env.VITE_ZOSMA_AUTH_ENABLED === "true";
+	const [needsRouterSetup, setNeedsRouterSetup] = useState(false);
 	const [, setSidebarView] = useState("chats");
 	const handleChangeView = useCallback((view: string) => {
 		setSidebarView(view);
@@ -146,6 +151,40 @@ function App() {
 	// the credentials re-check that fires right after the sidecar becomes ready.
 	const initializing =
 		telemetryUndecided || (!sidecarReady && (authLoading || hasCredentials !== true));
+
+	// After sidecar is ready, check if Zosma Router device auth is done.
+	// If VITE_ZOSMA_AUTH_ENABLED is false (production default), skip the check.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: invoke/isTauri/setNeedsRouterSetup are stable; we only want to re-check when initializing flips
+	useEffect(() => {
+		if (!isTauri() || !zosmaEnabled || initializing || authLoading) return;
+		let mounted = true;
+		(async () => {
+			try {
+				const status = await invoke<Record<string, unknown>>("get_auth_status");
+				const providers = (status.apiKeyProviders as string[]) ?? [];
+				if (mounted) setNeedsRouterSetup(!providers.includes("zosmaai-router"));
+			} catch {
+				if (mounted) setNeedsRouterSetup(true);
+			}
+		})();
+		return () => { mounted = false; };
+	}, [zosmaEnabled, initializing, authLoading]);
+
+	// Re-check after config-reload (e.g. after sign-in completes)
+	// biome-ignore lint/correctness/useExhaustiveDependencies: invoke/setNeedsRouterSetup are stable; only re-register on zosmaEnabled change
+	useEffect(() => {
+		if (!isTauri() || !zosmaEnabled) return;
+		const handler = () => {
+			invoke<Record<string, unknown>>("get_auth_status")
+				.then((status) => {
+					const providers = (status.apiKeyProviders as string[]) ?? [];
+					setNeedsRouterSetup(!providers.includes("zosmaai-router"));
+				})
+				.catch(() => {});
+		};
+		window.addEventListener("config-reload", handler);
+		return () => window.removeEventListener("config-reload", handler);
+	}, [zosmaEnabled]);
 	// Whether to render the Connect / API-key modal. Either we're forcing
 	// it (initial onboarding, unless the user explicitly skipped) or the
 	// user opened "Change API Key" from Settings.
@@ -847,6 +886,12 @@ function App() {
 					>
 						{initializing ? (
 							<SplashScreen />
+						) : needsRouterSetup && zosmaEnabled ? (
+							<RouterSetupScreen
+								onDone={() => {
+									setNeedsRouterSetup(false);
+								}}
+							/>
 						) : showConnectModal ? (
 							<HomeView
 								onComplete={handleConnectComplete}

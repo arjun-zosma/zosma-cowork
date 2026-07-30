@@ -74,3 +74,22 @@ export async function handleDisconnectZosmaAuth(deps: HandlerDependencies, cmd: 
 		sendMsg({ type: "error", id: cmd.id, message: msg });
 	}
 }
+
+export async function handleConfigureRouter(_deps: HandlerDependencies, cmd: any): Promise<void> {
+	try {
+		const { setZosmaAuthConfig, saveRouterConfig } = await import("../../zosma-auth/index.js");
+		setZosmaAuthConfig({
+			authBaseUrl: cmd.authBaseUrl,
+			routerBaseUrl: cmd.routerBaseUrl,
+		});
+		// Persist to file so config survives sidecar restart
+		saveRouterConfig(piAgentDir(), {
+			authBaseUrl: cmd.authBaseUrl,
+			routerBaseUrl: cmd.routerBaseUrl,
+		});
+		sendMsg({ type: "result", id: cmd.id, data: { configured: true } });
+	} catch (err: unknown) {
+		const msg = err instanceof Error ? err.message : String(err);
+		sendMsg({ type: "error", id: cmd.id, message: msg });
+	}
+}

@@ -2162,6 +2162,28 @@ async fn get_zosma_usage(s: State<'_, AppState>) -> Result<Value, String> {
     .await
 }
 
+/// Configure the Zosma Router base URLs (auth + router).
+/// The sidecar will use these for all subsequent API calls.
+#[tauri::command]
+async fn configure_router(
+    auth_base_url: String,
+    router_base_url: String,
+    s: State<'_, AppState>,
+) -> Result<Value, String> {
+    let id = format!("cr-{}", uuid_v4());
+    scmd_r(
+        &s,
+        &serde_json::json!({
+            "type": "configure_router",
+            "id": id,
+            "authBaseUrl": auth_base_url,
+            "routerBaseUrl": router_base_url,
+        }),
+        std::time::Duration::from_secs(5),
+    )
+    .await
+}
+
 // ── Telemetry ────────────────────────────────────────────────
 
 #[tauri::command]
@@ -2367,6 +2389,7 @@ pub fn run() {
             refresh_zosma_models,
             disconnect_zosma_auth,
             get_zosma_usage,
+            configure_router,
             get_auth_status,
             has_credentials,
             google_connect,

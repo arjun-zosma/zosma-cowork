@@ -390,6 +390,13 @@ export interface DisconnectZosmaAuthCommand {
 	id: string;
 }
 
+export interface ConfigureRouterCommand {
+	type: "configure_router";
+	id: string;
+	authBaseUrl: string;
+	routerBaseUrl: string;
+}
+
 // ── Remote / UI commands ───────────────────────────────────────────────────
 
 export interface StartRemoteCommand {
@@ -484,4 +491,5 @@ export type Command =
 	| CancelZosmaAuthCommand
 	| RefreshZosmaModelsCommand
 	| GetZosmaUsageCommand
-	| DisconnectZosmaAuthCommand;
+	| DisconnectZosmaAuthCommand
+	| ConfigureRouterCommand;
