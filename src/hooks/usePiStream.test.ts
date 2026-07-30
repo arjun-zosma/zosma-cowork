@@ -1,6 +1,6 @@
 import type { ToolCallInfo } from "@/types";
 import { describe, expect, it } from "vitest";
-import { INITIAL_STATE, type StreamAction, type StreamState, streamReducer } from "./usePiStream";
+import { errorFromFinalMessage, INITIAL_STATE, type StreamAction, type StreamState, streamReducer } from "./usePiStream";
 
 function run(actions: StreamAction[], start: StreamState = INITIAL_STATE): StreamState {
 	return actions.reduce(streamReducer, start);
@@ -11,6 +11,18 @@ const tool = (id: string, name: string): ToolCallInfo => ({
 	name,
 	args: {},
 	status: "running",
+});
+
+describe("errorFromFinalMessage", () => {
+	it("returns provider failure carried only by a final assistant message", () => {
+		expect(
+			errorFromFinalMessage({
+				role: "assistant",
+				stopReason: "error",
+				errorMessage: "401: router upstream rejected request",
+			}),
+		).toBe("401: router upstream rejected request");
+	});
 });
 
 describe("streamReducer — single bubble per agent run", () => {
@@ -433,6 +445,16 @@ describe("streamReducer — mid-stream error finalization", () => {
 		expect(s.streamingMessage).toBeNull();
 		// only the user message remains; no empty assistant bubble
 		expect(s.messages.filter((m) => m.role === "assistant")).toHaveLength(0);
+	});
+
+	it("keeps error after messages are saved", () => {
+		const failed = run([
+			{ type: "START_STREAM", prompt: "do a thing" },
+			{ type: "STREAM_ERROR", error: "provider down" },
+		]);
+		const afterSave = streamReducer(failed, { type: "CLEAR_MESSAGES" });
+		expect(afterSave.messages).toEqual([]);
+		expect(afterSave.error).toBe("provider down");
 	});
 });
 

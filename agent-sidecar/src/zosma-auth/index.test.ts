@@ -501,8 +501,9 @@ describe("refreshZosmaModels", () => {
 		const deps = makeDeps({}, [{ id: "p/new-model", provider: "zosmaai-router" }]);
 		await refreshZosmaModels(PI_DIR, deps);
 
-		// Verify Bearer header + redirect + timeout
+		// Catalog is entitlement data from auth; inference remains on router.
 		const call = (fetch as Mock).mock.calls[0];
+		expect(call[0]).toBe(`${LOCAL_AUTH}/v1/models`);
 		expect(call[1].headers.Authorization).toBe("Bearer original-key");
 		expect(call[1].redirect).toBe("error");
 		expect(call[1].signal).toBeTruthy();

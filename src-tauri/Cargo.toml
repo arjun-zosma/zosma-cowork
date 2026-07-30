@@ -37,3 +37,6 @@ git2 = { version = "0.19", features = ["vendored-openssl"] }
 walkdir = "2"
 dir-diff = "0.3"
 mime_guess = "2"
+
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }

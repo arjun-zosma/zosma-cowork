@@ -64,6 +64,10 @@ vi.mock("@/components/HomeView", () => ({
 	HomeView: () => <div data-testid="home" />,
 }));
 
+vi.mock("@/components/ZosmaLoginScreen", () => ({
+	ZosmaLoginScreen: () => <div data-testid="zosma-login" />,
+}));
+
 vi.mock("@/components/Sidebar", () => ({
 	Sidebar: () => <div data-testid="sidebar" />,
 }));
@@ -119,5 +123,11 @@ describe("App telemetry integration", () => {
 	it("initializes telemetry on mount", () => {
 		render(<App />);
 		expect(mockUseTelemetry).toHaveBeenCalledTimes(1);
+	});
+
+	it("shows Zosma login before chat when no credentials exist", () => {
+		const { getByTestId, queryByTestId } = render(<App />);
+		expect(getByTestId("zosma-login")).toBeInTheDocument();
+		expect(queryByTestId("chat")).not.toBeInTheDocument();
 	});
 });

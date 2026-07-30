@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_deep_link::DeepLinkExt;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::{oneshot, Mutex};
@@ -406,6 +407,9 @@ async fn spawn_sidecar(
     for a in &run_args {
         c.arg(a);
     }
+    // Cowork owns a private Pi state directory. This keeps its router account
+    // and models independent from a user's Pi CLI installation.
+    c.env("ZOSMA_PI_AGENT_DIR", PathBuf::from(zm).join("pi-agent"));
     // Set the sidecar log verbosity unless the caller already exported it.
     // Release builds default to `warn` (errors + warnings only) so production
     // stays quiet; dev builds default to `debug` for full tracing.
@@ -2233,7 +2237,22 @@ fn resolve_log_level() -> log::LevelFilter {
 
 pub fn run() {
     let aptabase_key = option_env!("APTABASE_KEY").unwrap_or("");
-    let builder = tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+    // Linux and Windows deliver a URL by launching another process. The
+    // single-instance plugin forwards that URL as deep-link://new-url to this
+    // window instead, so the renderer can finish the pending PKCE exchange.
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            log::debug!("Cowork already running; forwarded deep link: {:?}", argv);
+            if let Some(window) = app.get_webview_window("main") {
+                if let Err(error) = window.show().and_then(|_| window.set_focus()) {
+                    log::warn!("Failed to focus Cowork after deep link: {}", error);
+                }
+            }
+        }));
+    }
+    let builder = builder
         .plugin(
             tauri_plugin_log::Builder::new()
                 .clear_targets()
@@ -2261,9 +2280,6 @@ pub fn run() {
             enabled: Arc::new(AtomicBool::new(false)),
         });
 
-    #[allow(unused_mut)]
-    let mut builder = builder;
-
     // Only set up our in-house analytics if a key is available at compile time.
     // The analytics module uses tauri::async_runtime::spawn (safe in setup context)
     // into a single .setup() since Tauri only calls the last one.
@@ -2271,6 +2287,11 @@ pub fn run() {
 
     builder
         .setup(move |app| {
+            // Linux dev builds are not installed by a package manager, so
+            // register the configured URL schemes against the running binary.
+            #[cfg(all(debug_assertions, target_os = "linux"))]
+            app.deep_link().register_all()?;
+
             // Initialize in-house analytics (runs within Tauri's tokio runtime)
             if let Some(ref key) = ak {
                 if let Err(e) = analytics::setup(app, key) {

@@ -208,8 +208,14 @@ export function useZosmaAuth(options: UseZosmaAuthOptions = {}) {
 		try {
 			const { authorizationUrl } = await invoke<{ authorizationUrl: string }>("start_zosma_auth");
 
-			// Validate authorization URL is from expected host
-			if (!authorizationUrl.startsWith("https://auth.zosma.ai/connect/cowork?transaction=")) {
+			// Backend creates this URL; restrict it to an HTTP(S) cowork transaction,
+			// while allowing the local router used during development.
+			const parsed = new URL(authorizationUrl);
+			if (
+				!["http:", "https:"].includes(parsed.protocol) ||
+				parsed.pathname !== "/connect/cowork" ||
+				!parsed.searchParams.get("transaction")
+			) {
 				throw new Error("invalid authorization URL");
 			}
 

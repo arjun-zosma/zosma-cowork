@@ -100,6 +100,23 @@ describe("useZosmaAuth — start flow", () => {
 		expect(extractHookData(result).error).toMatch(/try again|failed|couldn't/i);
 	});
 
+	it("start() accepts a local authorization URL", async () => {
+		const authUrl = "http://localhost:3000/connect/cowork?transaction=abc123";
+		invokeMock.mockImplementation((cmd: string) => {
+			if (cmd === "start_zosma_auth") return Promise.resolve({ authorizationUrl: authUrl });
+			if (cmd === "open_url") return Promise.resolve(null);
+			return Promise.reject(new Error("unexpected"));
+		});
+
+		const { result } = renderHook(() => useZosmaAuth());
+		await act(async () => {
+			await extractHookData(result).start();
+		});
+
+		expect(invokeMock).toHaveBeenCalledWith("open_url", { url: authUrl });
+		expect(extractHookData(result).phase).toBe("waiting_browser");
+	});
+
 	it("start() enters error when authorizationUrl is invalid", async () => {
 		invokeMock.mockImplementation((cmd: string) => {
 			if (cmd === "start_zosma_auth")

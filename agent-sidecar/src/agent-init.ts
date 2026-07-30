@@ -55,7 +55,7 @@ Guidelines:
 // ── Directory helpers ──────────────────────────────────────────────────────
 
 export function piAgentDir(): string {
-	return join(homedir(), ".pi", "agent");
+	return process.env.ZOSMA_PI_AGENT_DIR?.trim() || join(homedir(), ".pi", "agent");
 }
 
 export function defaultZosmaDir(): string {

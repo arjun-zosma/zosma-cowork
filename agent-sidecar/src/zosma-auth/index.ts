@@ -256,8 +256,8 @@ export async function completeZosmaAuth(
 		throw new Error("token response missing access_token");
 	}
 
-	// 4. Fetch authenticated model catalog
-	const modelsRes = await fetchImpl(`${routerBaseUrl}/models`, {
+	// 4. Fetch authenticated entitlement catalog; inference stays on routerBaseUrl.
+	const modelsRes = await fetchImpl(`${authBaseUrl}/v1/models`, {
 		headers: { Authorization: `Bearer ${routerKey}` },
 		redirect: "error",
 		signal: AbortSignal.timeout(TIMEOUT_MS),
@@ -404,8 +404,8 @@ export async function refreshZosmaModels(
 		throw new Error("no zosmaai-router provider configured");
 	}
 
-	// Fetch authenticated catalog
-	const modelsRes = await fetchImpl(`${routerBaseUrl}/models`, {
+	// Fetch authenticated entitlement catalog; inference stays on routerBaseUrl.
+	const modelsRes = await fetchImpl(`${authBaseUrl}/v1/models`, {
 		headers: { Authorization: `Bearer ${provider.apiKey}` },
 		redirect: "error",
 		signal: AbortSignal.timeout(TIMEOUT_MS),
