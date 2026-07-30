@@ -3,6 +3,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "./App.css";
 import App from "./App";
+import { ExtensionUiProvider } from "./contexts/ExtensionUiContext";
 import { UpdateProvider } from "./contexts/UpdateProvider";
 import { initChatWidth } from "./lib/chat-width";
 import { installExternalLinkHandler } from "./lib/external-links";
@@ -27,7 +28,9 @@ createRoot(rootElement, {
 }).render(
 	<StrictMode>
 		<UpdateProvider>
-			<App />
+			<ExtensionUiProvider>
+				<App />
+			</ExtensionUiProvider>
 		</UpdateProvider>
 	</StrictMode>,
 );

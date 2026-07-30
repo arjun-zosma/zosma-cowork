@@ -2,6 +2,7 @@ import { ChatView } from "@/chat/ChatView";
 import { log } from "./lib/log";
 import { HelpDialog } from "@/components/HelpDialog";
 import { HomeView } from "@/components/HomeView";
+import { ZosmaLoginScreen } from "@/components/ZosmaLoginScreen";
 import { SettingsPage } from "@/components/SettingsPage";
 import { Sidebar } from "@/components/Sidebar";
 import { SplashScreen } from "@/components/SplashScreen";
@@ -79,6 +80,7 @@ function App() {
 	// User explicitly chose "configure in Settings" — bypass the Connect
 	// modal even without stored credentials.
 	const [skipOnboarding, setSkipOnboarding] = useState(false);
+	const zosmaEnabled = import.meta.env.VITE_ZOSMA_AUTH_ENABLED !== "false";
 	const [, setSidebarView] = useState("chats");
 	const handleChangeView = useCallback((view: string) => {
 		setSidebarView(view);
@@ -146,10 +148,13 @@ function App() {
 	// the credentials re-check that fires right after the sidecar becomes ready.
 	const initializing =
 		telemetryUndecided || (!sidecarReady && (authLoading || hasCredentials !== true));
-	// Whether to render the Connect / API-key modal. Either we're forcing
-	// it (initial onboarding, unless the user explicitly skipped) or the
-	// user opened "Change API Key" from Settings.
-	const showConnectModal = (needsOnboarding && !skipOnboarding) || showKeyEntry;
+
+	// New installs enter through Zosma Google login. Cowork's private Pi state
+	// has no inherited credentials, so no model registry is shown before this.
+	const showZosmaLogin = zosmaEnabled && !authLoading && !hasCredentials;
+	// Whether to render the legacy Connect / API-key modal. It remains reachable
+	// from Settings, but is not part of Zosma first-run onboarding.
+	const showConnectModal = (!zosmaEnabled && needsOnboarding && !skipOnboarding) || showKeyEntry;
 
 	// Settings persistence
 	const settingsLoadedRef = useRef(false);
@@ -347,8 +352,8 @@ function App() {
 			// Update loaded messages so the display shows full history
 			setLoadedSessionMessages(merged);
 
-			// Clear stream messages to prevent duplication on next render
-			dispatch({ type: "RESET" });
+			// Clear saved messages without hiding a terminal provider error.
+			dispatch({ type: "CLEAR_MESSAGES" });
 
 			// pi auto-persists during the agent loop — no manual save. Just
 			// reconcile the sidebar with disk truth (title/preview/count).
@@ -739,7 +744,7 @@ function App() {
 	// Hide the app chrome (sidebar, mobile bars, share button) whenever the
 	// main pane is showing a full-screen state: onboarding, settings, or the
 	// startup loading splash (#169).
-	const hideChrome = showConnectModal || showSettings || initializing;
+	const hideChrome = showZosmaLogin || showConnectModal || showSettings || initializing || models.length === 0;
 
 	const sidebarSessions = sessionEntries.map((s) => ({
 		id: s.file,
@@ -835,8 +840,10 @@ function App() {
 						key={
 							initializing
 								? "splash"
-								: showConnectModal
-									? "connect"
+								: showZosmaLogin
+									? "zosma-login"
+									: showConnectModal
+										? "connect"
 									: showSettings
 										? "settings"
 										: loadingSession
@@ -846,6 +853,10 @@ function App() {
 						className="flex-1 flex flex-col min-h-0 animate-fade-in"
 					>
 						{initializing ? (
+							<SplashScreen />
+						) : showZosmaLogin ? (
+							<ZosmaLoginScreen onComplete={() => {}} />
+						) : models.length === 0 ? (
 							<SplashScreen />
 						) : showConnectModal ? (
 							<HomeView

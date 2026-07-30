@@ -356,6 +356,47 @@ export interface TasksGetCompletedCommand {
 	cwd?: string;
 }
 
+// ── Zosma Router Auth commands ─────────────────────────────────────────────
+
+export interface StartZosmaAuthCommand {
+	type: "start_zosma_auth";
+	id: string;
+}
+
+export interface CompleteZosmaAuthCommand {
+	type: "complete_zosma_auth";
+	id: string;
+	code: string;
+	state: string;
+}
+
+export interface CancelZosmaAuthCommand {
+	type: "cancel_zosma_auth";
+	id: string;
+}
+
+export interface RefreshZosmaModelsCommand {
+	type: "refresh_zosma_models";
+	id: string;
+}
+
+export interface GetZosmaUsageCommand {
+	type: "get_zosma_usage";
+	id: string;
+}
+
+export interface DisconnectZosmaAuthCommand {
+	type: "disconnect_zosma_auth";
+	id: string;
+}
+
+export interface ConfigureRouterCommand {
+	type: "configure_router";
+	id: string;
+	authBaseUrl: string;
+	routerBaseUrl: string;
+}
+
 // ── Remote / UI commands ───────────────────────────────────────────────────
 
 export interface StartRemoteCommand {
@@ -444,4 +485,11 @@ export type Command =
 	| GhOrganizationsCommand
 	| GhAuthLoginCommand
 	| GhAuthCancelCommand
-	| GhAuthLogoutCommand;
+	| GhAuthLogoutCommand
+	| StartZosmaAuthCommand
+	| CompleteZosmaAuthCommand
+	| CancelZosmaAuthCommand
+	| RefreshZosmaModelsCommand
+	| GetZosmaUsageCommand
+	| DisconnectZosmaAuthCommand
+	| ConfigureRouterCommand;

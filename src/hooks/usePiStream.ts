@@ -101,6 +101,7 @@ export type StreamAction =
 	| { type: "STREAM_ERROR"; error: string }
 	| { type: "ABORT_STREAM" }
 	| { type: "RESET" }
+	| { type: "CLEAR_MESSAGES" }
 	/**
 	 * Reconciling action — dispatched on every `queue_update` event from
 	 * the sidecar. Replaces the entire queue snapshot (no merge: the
@@ -132,6 +133,17 @@ export type StreamAction =
 	 * transcript reads: assistant-part-1 → [Steering …] → assistant-part-2.
 	 */
 	| { type: "USER_MESSAGE_STARTED"; content: string };
+
+/** Error carried by Pi's terminal assistant message instead of an `error` event. */
+export function errorFromFinalMessage(message: {
+	role?: string;
+	stopReason?: string;
+	errorMessage?: string;
+}): string | null {
+	return message.role === "assistant" && message.stopReason === "error"
+		? message.errorMessage || "Model response failed"
+		: null;
+}
 
 export const INITIAL_STATE: StreamState = {
 	messages: [],
@@ -495,6 +507,11 @@ export function streamReducer(state: StreamState, action: StreamAction): StreamS
 		case "RESET":
 			return INITIAL_STATE;
 
+		case "CLEAR_MESSAGES":
+			return state.error
+				? { ...INITIAL_STATE, error: state.error, status: "error" }
+				: INITIAL_STATE;
+
 		case "QUEUE_UPDATE": {
 			const queuedKinds = { ...state.queuedKinds };
 			for (const t of action.steering) queuedKinds[t] = "steer";
@@ -681,7 +698,8 @@ export function usePiStream() {
 					}
 
 					case "message_end": {
-						dispatch({ type: "MESSAGE_END" });
+						const error = errorFromFinalMessage(event.message);
+						dispatch(error ? { type: "STREAM_ERROR", error } : { type: "MESSAGE_END" });
 						break;
 					}
 

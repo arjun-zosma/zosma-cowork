@@ -239,6 +239,7 @@ export interface PiAgentMessage {
 		};
 	};
 	stopReason?: string;
+	errorMessage?: string;
 	responseId?: string;
 	toolCallId?: string;
 	toolName?: string;

@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_deep_link::DeepLinkExt;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::{oneshot, Mutex};
@@ -406,6 +407,9 @@ async fn spawn_sidecar(
     for a in &run_args {
         c.arg(a);
     }
+    // Cowork owns a private Pi state directory. This keeps its router account
+    // and models independent from a user's Pi CLI installation.
+    c.env("ZOSMA_PI_AGENT_DIR", PathBuf::from(zm).join("pi-agent"));
     // Set the sidecar log verbosity unless the caller already exported it.
     // Release builds default to `warn` (errors + warnings only) so production
     // stays quiet; dev builds default to `debug` for full tracing.
@@ -1064,6 +1068,21 @@ async fn has_credentials(s: State<'_, AppState>) -> Result<bool, String> {
         .map(|a| !a.is_empty())
         .unwrap_or(false);
     if has_auth {
+        return Ok(true);
+    }
+    // A configured Zosma Router auth (zosmaai-router managed provider) is a
+    // complete, working setup even though it leaves no entry in auth storage.
+    // The managed provider appears in apiKeyProviders from modelRegistry but
+    // not in `providers` (auth.json). Check for it specifically.
+    let has_managed = r
+        .get("apiKeyProviders")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .any(|p| p.get("id").and_then(|id| id.as_str()) == Some("zosmaai-router"))
+        })
+        .unwrap_or(false);
+    if has_managed {
         return Ok(true);
     }
     // A configured Custom Local LLM (issue #207) is a complete, working setup
@@ -2059,6 +2078,116 @@ async fn open_url(url: String) -> Result<(), String> {
     Ok(())
 }
 
+// ── Zosma Router Auth relay commands ────────────────────────────
+
+/// Forward to sidecar start_zosma_auth command.
+/// Returns { authorizationUrl: string }.
+#[tauri::command]
+async fn start_zosma_auth(s: State<'_, AppState>) -> Result<Value, String> {
+    let id = format!("za-{}", uuid_v4());
+    scmd_r(
+        &s,
+        &serde_json::json!({"type":"start_zosma_auth","id":id}),
+        std::time::Duration::from_secs(15),
+    )
+    .await
+}
+
+/// Forward to sidecar complete_zosma_auth command.
+/// code and state from the deep-link URL. The sidecar handles all
+/// PKCE exchange and provider save/reload.
+#[tauri::command]
+async fn complete_zosma_auth(
+    code: String,
+    state: String,
+    s: State<'_, AppState>,
+) -> Result<Value, String> {
+    let id = format!("zc-{}", uuid_v4());
+    scmd_r(
+        &s,
+        &serde_json::json!({
+            "type": "complete_zosma_auth",
+            "id": id,
+            "code": code,
+            "state": state,
+        }),
+        std::time::Duration::from_secs(20),
+    )
+    .await
+}
+
+/// Cancel an in-progress Zosma auth flow. Deletes pending PKCE state.
+#[tauri::command]
+async fn cancel_zosma_auth(s: State<'_, AppState>) -> Result<Value, String> {
+    let id = format!("zcl-{}", uuid_v4());
+    scmd_r(
+        &s,
+        &serde_json::json!({"type":"cancel_zosma_auth","id":id}),
+        std::time::Duration::from_secs(10),
+    )
+    .await
+}
+
+/// Refresh models for the managed zosmaai-router provider without
+/// rotating the device key.
+#[tauri::command]
+async fn refresh_zosma_models(s: State<'_, AppState>) -> Result<Value, String> {
+    let id = format!("zrm-{}", uuid_v4());
+    scmd_r(
+        &s,
+        &serde_json::json!({"type":"refresh_zosma_models","id":id}),
+        std::time::Duration::from_secs(20),
+    )
+    .await
+}
+
+/// Disconnect Zosma Router auth: revoke server-side, remove local
+/// provider, reload registry.
+#[tauri::command]
+async fn disconnect_zosma_auth(s: State<'_, AppState>) -> Result<Value, String> {
+    let id = format!("zd-{}", uuid_v4());
+    scmd_r(
+        &s,
+        &serde_json::json!({"type":"disconnect_zosma_auth","id":id}),
+        std::time::Duration::from_secs(15),
+    )
+    .await
+}
+
+/// Get Zosma account usage information (non-secret DTO only).
+#[tauri::command]
+async fn get_zosma_usage(s: State<'_, AppState>) -> Result<Value, String> {
+    let id = format!("zu-{}", uuid_v4());
+    scmd_r(
+        &s,
+        &serde_json::json!({"type":"get_zosma_usage","id":id}),
+        std::time::Duration::from_secs(15),
+    )
+    .await
+}
+
+/// Configure the Zosma Router base URLs (auth + router).
+/// The sidecar will use these for all subsequent API calls.
+#[tauri::command]
+async fn configure_router(
+    auth_base_url: String,
+    router_base_url: String,
+    s: State<'_, AppState>,
+) -> Result<Value, String> {
+    let id = format!("cr-{}", uuid_v4());
+    scmd_r(
+        &s,
+        &serde_json::json!({
+            "type": "configure_router",
+            "id": id,
+            "authBaseUrl": auth_base_url,
+            "routerBaseUrl": router_base_url,
+        }),
+        std::time::Duration::from_secs(5),
+    )
+    .await
+}
+
 // ── Telemetry ────────────────────────────────────────────────
 
 #[tauri::command]
@@ -2108,7 +2237,22 @@ fn resolve_log_level() -> log::LevelFilter {
 
 pub fn run() {
     let aptabase_key = option_env!("APTABASE_KEY").unwrap_or("");
-    let builder = tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+    // Linux and Windows deliver a URL by launching another process. The
+    // single-instance plugin forwards that URL as deep-link://new-url to this
+    // window instead, so the renderer can finish the pending PKCE exchange.
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            log::debug!("Cowork already running; forwarded deep link: {:?}", argv);
+            if let Some(window) = app.get_webview_window("main") {
+                if let Err(error) = window.show().and_then(|_| window.set_focus()) {
+                    log::warn!("Failed to focus Cowork after deep link: {}", error);
+                }
+            }
+        }));
+    }
+    let builder = builder
         .plugin(
             tauri_plugin_log::Builder::new()
                 .clear_targets()
@@ -2131,12 +2275,10 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_deep_link::init())
         .manage(TelemetryState {
             enabled: Arc::new(AtomicBool::new(false)),
         });
-
-    #[allow(unused_mut)]
-    let mut builder = builder;
 
     // Only set up our in-house analytics if a key is available at compile time.
     // The analytics module uses tauri::async_runtime::spawn (safe in setup context)
@@ -2145,6 +2287,11 @@ pub fn run() {
 
     builder
         .setup(move |app| {
+            // Linux dev builds are not installed by a package manager, so
+            // register the configured URL schemes against the running binary.
+            #[cfg(all(debug_assertions, target_os = "linux"))]
+            app.deep_link().register_all()?;
+
             // Initialize in-house analytics (runs within Tauri's tokio runtime)
             if let Some(ref key) = ak {
                 if let Err(e) = analytics::setup(app, key) {
@@ -2257,6 +2404,13 @@ pub fn run() {
             start_oauth,
             cancel_oauth,
             logout_provider,
+            start_zosma_auth,
+            complete_zosma_auth,
+            cancel_zosma_auth,
+            refresh_zosma_models,
+            disconnect_zosma_auth,
+            get_zosma_usage,
+            configure_router,
             get_auth_status,
             has_credentials,
             google_connect,

@@ -127,6 +127,7 @@ export const RESERVED_PROVIDER_IDS: ReadonlySet<string> = new Set([
 	"zosmaai",
 	"local-qwen",
 	"opencode-go",
+	"zosmaai-router",
 ]);
 
 /** Input shape the sidecar accepts from the Tauri layer. */
@@ -468,7 +469,7 @@ export function saveCustomProvider(modelsPath: string, input: SaveCustomProvider
 	writeConfig(modelsPath, config);
 }
 
-/** Remove a provider entry. No-op when missing. */
+/** Remove a user-added provider entry. No-op when missing or reserved. */
 export function deleteCustomProvider(modelsPath: string, providerId: string): void {
 	if (!existsSync(modelsPath)) return;
 	// Never remove a Zosma-managed core provider (Claude, local-qwen, …), even
@@ -477,6 +478,61 @@ export function deleteCustomProvider(modelsPath: string, providerId: string): vo
 	const config = readConfig(modelsPath);
 	if (!(providerId in config.providers)) return;
 	delete config.providers[providerId];
+	writeConfig(modelsPath, config);
+}
+
+/**
+ * Read a single provider entry from models.json. Returns null if missing.
+ */
+export function readProviderEntry(
+	modelsPath: string,
+	id: string,
+): Record<string, unknown> | null {
+	const config = readConfig(modelsPath);
+	return config.providers[id] ? { ...config.providers[id] } : null;
+}
+
+/**
+ * Deep-clone a single provider entry for snapshot/rollback purposes.
+ * Returns null if the provider doesn't exist.
+ */
+export function snapshotProvider(
+	modelsPath: string,
+	id: string,
+): Record<string, unknown> | null {
+	const config = readConfig(modelsPath);
+	return config.providers[id] ? { ...config.providers[id] } : null;
+}
+
+/**
+ * Restore a provider from a snapshot, or delete it if snapshot is null.
+ * Used for rollback after failed atomic save + reload.
+ */
+export function restoreProvider(
+	modelsPath: string,
+	id: string,
+	snapshot: Record<string, unknown> | null,
+): void {
+	const config = readConfig(modelsPath);
+	if (snapshot) {
+		config.providers[id] = snapshot;
+	} else {
+		delete config.providers[id];
+	}
+	writeConfig(modelsPath, config);
+}
+
+/**
+ * Delete a provider entry regardless of reservation status.
+ * Unlike deleteCustomProvider, this does NOT check RESERVED_PROVIDER_IDS.
+ * Used by app-managed flows (disconnect_zosma_auth) that explicitly target
+ * providers they own.
+ */
+export function deleteProviderEntry(modelsPath: string, id: string): void {
+	if (!existsSync(modelsPath)) return;
+	const config = readConfig(modelsPath);
+	if (!(id in config.providers)) return;
+	delete config.providers[id];
 	writeConfig(modelsPath, config);
 }
 

@@ -22,6 +22,14 @@ vi.mock("@tauri-apps/api/core", () => ({
 	invoke: (...args: unknown[]) => mockInvoke(...args),
 }));
 
+// Mock deep-link for useZosmaAuth
+const mockGetCurrent = vi.fn().mockResolvedValue(null); // string[] | null
+const mockOnOpenUrl = vi.fn().mockResolvedValue(vi.fn());
+vi.mock("@tauri-apps/plugin-deep-link", () => ({
+	getCurrent: (...args: unknown[]) => mockGetCurrent(...args),
+	onOpenUrl: (...args: unknown[]) => mockOnOpenUrl(...args),
+}));
+
 // ── Default sidecar response factory ────────────────────────────────────
 
 interface AuthStatus {
@@ -315,5 +323,156 @@ describe("HomeView — live probe", () => {
 		await waitFor(() => {
 			expect(onComplete).toHaveBeenCalledWith("openrouter", "totally-wrong-format");
 		});
+	});
+});
+
+// ── Zosma Router Auth card ─────────────────────────────────────────────
+
+describe("HomeView — Zosma auth card", () => {
+	beforeEach(() => {
+		configureSidecar();
+		process.env.VITE_ZOSMA_AUTH_ENABLED = "true";
+	});
+
+	afterEach(() => {
+		vi.clearAllMocks();
+		process.env.VITE_ZOSMA_AUTH_ENABLED = undefined;
+	});
+
+	it("renders 'Continue with Zosma' card on connect screen", async () => {
+		render(<HomeView onComplete={vi.fn()} />);
+		await advanceToConnectScreen();
+
+		expect(screen.getByText(/continue with zosma/i)).toBeInTheDocument();
+		expect(screen.getByText(/recommended/i)).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /continue with google/i })).toBeInTheDocument();
+	});
+
+	it("card shows before API key section (renders higher in DOM)", async () => {
+		render(<HomeView onComplete={vi.fn()} />);
+		await advanceToConnectScreen();
+
+		const zosmaCard = screen.getByText(/continue with zosma/i).closest(".rounded-xl");
+		const apiKeyCard = screen.getByText(/api key/i).closest(".rounded-xl");
+
+		expect(zosmaCard).toBeTruthy();
+		expect(apiKeyCard).toBeTruthy();
+
+		// Zosma card should appear before API key card in DOM order
+		if (zosmaCard && apiKeyCard) {
+			const allCards = screen.getAllByText(/continue with zosma|api key/i);
+			expect(allCards[0].textContent).toMatch(/zosma/i);
+		}
+	});
+
+	it("Continue with Google button starts auth flow and shows waiting state", async () => {
+		mockInvoke.mockImplementation((cmd: string) => {
+			if (cmd === "start_zosma_auth") {
+				return Promise.resolve({
+					authorizationUrl: "https://auth.zosma.ai/connect/cowork?transaction=t1",
+				});
+			}
+			if (cmd === "open_url") return Promise.resolve(null);
+			if (cmd === "get_auth_status") {
+				return Promise.resolve({
+					providers: [],
+					supported: [],
+					apiKeyProviders: [],
+				});
+			}
+			return Promise.reject(new Error(`unexpected: ${cmd}`));
+		});
+
+		render(<HomeView onComplete={vi.fn()} />);
+		await advanceToConnectScreen();
+
+		const googleBtn = screen.getByRole("button", { name: /continue with google/i });
+		await act(async () => {
+			fireEvent.click(googleBtn);
+		});
+
+		expect(mockInvoke).toHaveBeenCalledWith("start_zosma_auth");
+		expect(mockInvoke).toHaveBeenCalledWith(
+			"open_url",
+			expect.objectContaining({ url: expect.stringContaining("auth.zosma.ai") }),
+		);
+
+		await waitFor(() => {
+			expect(screen.getByText(/complete sign-in/i)).toBeInTheDocument();
+		});
+	});
+
+	it("shows Cancel button when waiting for browser", async () => {
+		mockInvoke.mockImplementation((cmd: string) => {
+			if (cmd === "start_zosma_auth") {
+				return Promise.resolve({
+					authorizationUrl: "https://auth.zosma.ai/connect/cowork?transaction=t1",
+				});
+			}
+			if (cmd === "open_url") return Promise.resolve(null);
+			if (cmd === "get_auth_status") {
+				return Promise.resolve({
+					providers: [],
+					supported: [],
+					apiKeyProviders: [],
+				});
+			}
+			return Promise.reject(new Error(`unexpected: ${cmd}`));
+		});
+
+		render(<HomeView onComplete={vi.fn()} />);
+		await advanceToConnectScreen();
+
+		const googleBtn = screen.getByRole("button", { name: /continue with google/i });
+		await act(async () => {
+			fireEvent.click(googleBtn);
+		});
+
+		await waitFor(() => {
+			expect(screen.getByText(/complete sign-in/i)).toBeInTheDocument();
+		});
+
+		const cancelBtn = screen.getByRole("button", { name: /cancel/i });
+		expect(cancelBtn).toBeInTheDocument();
+
+		// Clicking Cancel resets to idle
+		await act(async () => {
+			fireEvent.click(cancelBtn);
+		});
+
+		await waitFor(() => {
+			expect(screen.getByRole("button", { name: /continue with google/i })).toBeInTheDocument();
+		});
+	});
+
+	it("shows error state with Retry when auth fails", async () => {
+		mockInvoke.mockImplementation((cmd: string) => {
+			if (cmd === "start_zosma_auth") {
+				return Promise.reject(new Error("sidecar not ready"));
+			}
+			if (cmd === "get_auth_status") {
+				return Promise.resolve({
+					providers: [],
+					supported: [],
+					apiKeyProviders: [],
+				});
+			}
+			return Promise.reject(new Error(`unexpected: ${cmd}`));
+		});
+
+		render(<HomeView onComplete={vi.fn()} />);
+		await advanceToConnectScreen();
+
+		const googleBtn = screen.getByRole("button", { name: /continue with google/i });
+		await act(async () => {
+			fireEvent.click(googleBtn);
+		});
+
+		await waitFor(() => {
+			expect(screen.getByText(/retry/i)).toBeInTheDocument();
+		});
+
+		// Error message should be user-safe, not raw backend text
+		expect(screen.getByText(/try again|restart/i)).toBeInTheDocument();
 	});
 });

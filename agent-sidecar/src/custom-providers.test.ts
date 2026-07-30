@@ -21,12 +21,16 @@ import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	deleteCustomProvider,
+	deleteProviderEntry,
 	discoverModels,
 	listCustomProviders,
 	modelsEndpoints,
 	normalizeModelInput,
+	readProviderEntry,
 	resolveModelInput,
+	restoreProvider,
 	saveCustomProvider,
+	snapshotProvider,
 } from "./custom-providers.js";
 
 const VALID_INPUT = {
@@ -344,7 +348,7 @@ describe("custom-providers", () => {
 	// opencode-go) live alongside UI-created ones. They must NOT surface in the
 	// "Custom Local LLM" panel — otherwise the user sees undeletable rows and
 	// could even delete the Claude provider. Only genuinely-custom entries show.
-	it("excludes Zosma-managed core providers (zosmaai, local-qwen, opencode-go)", () => {
+	it("excludes Zosma-managed core providers (zosmaai, local-qwen, opencode-go, zosmaai-router)", () => {
 		writeFileSync(
 			modelsPath,
 			JSON.stringify({
@@ -369,6 +373,13 @@ describe("custom-providers", () => {
 						apiKey: "k",
 						api: "openai-completions",
 						models: [{ id: "deepseek-v4-flash", name: "DeepSeek" }],
+					},
+					"zosmaai-router": {
+						name: "Zosma AI",
+						baseUrl: "https://router.zosma.ai/v1",
+						apiKey: "k",
+						api: "openai-completions",
+						models: [{ id: "p/m1", name: "M1" }],
 					},
 				},
 			}),
@@ -425,12 +436,119 @@ describe("custom-providers", () => {
 						api: "anthropic-messages",
 						models: [{ id: "claude-opus-4-8" }],
 					},
+					"zosmaai-router": {
+						name: "Zosma AI",
+						baseUrl: "https://router.zosma.ai/v1",
+						apiKey: "k",
+						api: "openai-completions",
+						models: [{ id: "p/m1" }],
+					},
 				},
 			}),
 		);
 		deleteCustomProvider(modelsPath, "zosmaai");
+		deleteCustomProvider(modelsPath, "zosmaai-router");
 		const config = JSON.parse(readFileSync(modelsPath, "utf-8"));
 		expect(config.providers.zosmaai).toBeDefined();
+		expect(config.providers["zosmaai-router"]).toBeDefined();
+	});
+
+	// ── app-managed provider helpers (snapshotProvider, restoreProvider, etc.) ──
+
+	it("readProviderEntry returns null for missing provider", () => {
+		saveCustomProvider(modelsPath, VALID_INPUT);
+		expect(readProviderEntry(modelsPath, "nonexistent")).toBeNull();
+	});
+
+	it("readProviderEntry returns a copy of the provider entry", () => {
+		saveCustomProvider(modelsPath, { ...VALID_INPUT, apiKey: "sk-secret" });
+		const entry = readProviderEntry(modelsPath, "custom-local-llm");
+		expect(entry).not.toBeNull();
+		expect(entry!.apiKey).toBe("sk-secret");
+		// Mutating the returned entry must not affect stored config
+		entry!.apiKey = "hacked";
+		const reRead = readProviderEntry(modelsPath, "custom-local-llm");
+		expect(reRead!.apiKey).toBe("sk-secret");
+	});
+
+	it("snapshotProvider returns null for missing provider", () => {
+		expect(snapshotProvider(modelsPath, "nonexistent")).toBeNull();
+	});
+
+	it("snapshotProvider deep-clones provider entry", () => {
+		saveCustomProvider(modelsPath, { ...VALID_INPUT, apiKey: "sk-snap" });
+		const snap = snapshotProvider(modelsPath, "custom-local-llm");
+		expect(snap).not.toBeNull();
+		expect(snap!.apiKey).toBe("sk-snap");
+		// Mutation safety
+		snap!.apiKey = "mutated";
+		const original = readProviderEntry(modelsPath, "custom-local-llm");
+		expect(original!.apiKey).toBe("sk-snap");
+	});
+
+	it("restoreProvider restores entry from snapshot", () => {
+		saveCustomProvider(modelsPath, { ...VALID_INPUT, apiKey: "sk-v1" });
+		const snap = snapshotProvider(modelsPath, "custom-local-llm");
+		// Overwrite with different data
+		saveCustomProvider(modelsPath, { ...VALID_INPUT, apiKey: "sk-v2" });
+		expect(readProviderEntry(modelsPath, "custom-local-llm")!.apiKey).toBe("sk-v2");
+		// Restore from snapshot
+		restoreProvider(modelsPath, "custom-local-llm", snap);
+		expect(readProviderEntry(modelsPath, "custom-local-llm")!.apiKey).toBe("sk-v1");
+	});
+
+	it("restoreProvider with null snapshot deletes the entry", () => {
+		saveCustomProvider(modelsPath, VALID_INPUT);
+		restoreProvider(modelsPath, "custom-local-llm", null);
+		expect(readProviderEntry(modelsPath, "custom-local-llm")).toBeNull();
+	});
+
+	it("restoreProvider preserves sibling providers", () => {
+		// Write two providers
+		saveCustomProvider(modelsPath, { id: "provider-a", name: "A", baseUrl: "http://a/v1", models: [{ id: "a1" }] });
+		saveCustomProvider(modelsPath, { id: "provider-b", name: "B", baseUrl: "http://b/v1", models: [{ id: "b1" }] });
+		const snapA = snapshotProvider(modelsPath, "provider-a");
+		// Delete A, restore from snapshot
+		restoreProvider(modelsPath, "provider-a", null);
+		expect(readProviderEntry(modelsPath, "provider-a")).toBeNull();
+		expect(readProviderEntry(modelsPath, "provider-b")).not.toBeNull();
+		restoreProvider(modelsPath, "provider-a", snapA);
+		expect(readProviderEntry(modelsPath, "provider-a")).not.toBeNull();
+		expect(readProviderEntry(modelsPath, "provider-b")).not.toBeNull();
+	});
+
+	it("deleteProviderEntry removes entry even if reserved", () => {
+		writeFileSync(
+			modelsPath,
+			JSON.stringify({
+				providers: {
+					"zosmaai-router": {
+						name: "Zosma AI",
+						baseUrl: "https://router.zosma.ai/v1",
+						apiKey: "k",
+						api: "openai-completions",
+						models: [{ id: "p/m1" }],
+					},
+					"custom-local-llm": {
+						name: "Local",
+						baseUrl: "http://localhost:11434/v1",
+						apiKey: "k",
+						api: "openai-completions",
+						models: [{ id: "m1" }],
+					},
+				},
+			}),
+		);
+		// deleteCustomProvider would refuse to remove zosmaai-router (reserved)
+		deleteCustomProvider(modelsPath, "zosmaai-router");
+		let config = JSON.parse(readFileSync(modelsPath, "utf-8"));
+		expect(config.providers["zosmaai-router"]).toBeDefined(); // still there
+
+		// deleteProviderEntry bypasses the reserve check
+		deleteProviderEntry(modelsPath, "zosmaai-router");
+		config = JSON.parse(readFileSync(modelsPath, "utf-8"));
+		expect(config.providers["zosmaai-router"]).toBeUndefined();
+		expect(config.providers["custom-local-llm"]).toBeDefined(); // sibling preserved
 	});
 
 	// ── ROUND-TRIP with the real pi-coding-agent ModelRegistry ─────────
