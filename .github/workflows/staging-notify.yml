@@ -20,8 +20,8 @@ name: Staging Notify
 #     - fork contributors never see it and nothing is shared with anyone;
 #     - we can still write the PR's sticky comment (writable token).
 #
-#   This is strictly safer than `pull_request_target`, which would run the
-#   fork's build steps WITH secrets in scope.
+#   The build workflow's `pull_request_target` path also has no protected
+#   secrets and only contents:read; production signing keys stay out of scope.
 #
 # HOW the two halves connect:
 #   - The build uploads installers named
