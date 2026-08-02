@@ -21,9 +21,17 @@ import { generateCodeVerifier, generateState, sha256Base64url } from "./crypto.j
 import { deletePending, loadPending, savePending } from "./state.js";
 
 // ponytail: mutable defaults for test injection. Set via setZosmaAuthConfig.
-// Production uses these hardcoded values. Override via env vars or setZosmaAuthConfig.
-let authBaseUrl = process.env.ZOSMA_AUTH_BASE_URL || "https://auth.zosma.ai";
-let routerBaseUrl = process.env.ZOSMA_ROUTER_BASE_URL || "https://router.zosma.ai/v1";
+// Packaged builds replace baked endpoint slots in prebuild.mjs; shell env still
+// wins for local development.
+const BAKED_AUTH_BASE_URL = "__ZOSMA_AUTH_BASE_URL__";
+const BAKED_ROUTER_BASE_URL = "__ZOSMA_ROUTER_BASE_URL__";
+const bakedOr = (value: string, fallback: string): string =>
+	value.startsWith("__ZOSMA_") ? fallback : value;
+let authBaseUrl =
+	process.env.ZOSMA_AUTH_BASE_URL?.trim() || bakedOr(BAKED_AUTH_BASE_URL, "https://auth.zosma.ai");
+let routerBaseUrl =
+	process.env.ZOSMA_ROUTER_BASE_URL?.trim() ||
+	bakedOr(BAKED_ROUTER_BASE_URL, "https://router.zosma.ai/v1");
 let fetchImpl: typeof globalThis.fetch = globalThis.fetch;
 const DEVICE_ID_FILE = "zosma-device-id.txt";
 const ROUTER_CONFIG_FILE = "zosma-router-config.json";

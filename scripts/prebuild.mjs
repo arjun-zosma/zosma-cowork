@@ -79,27 +79,45 @@ if (antigravitySecret) {
 
 // Inject the Zosma Google OAuth config. These are PUBLIC values (the Web
 // client_id and the broker's HTTPS URL) — NO secret is ever baked, because the
-// secret lives only in the backend broker. Source ships STAGING defaults, so a
-// build with neither env var set still works against staging; a prod release
-// sets ZOSMA_GOOGLE_CLIENT_ID / ZOSMA_OAUTH_BROKER_URL to override.
+// secret lives only in the backend broker. Staging and production workflows
+// pass explicit values so packaged apps never depend on shell env at runtime.
 console.log("[prebuild] Injecting Zosma Google OAuth config (public)...");
-if (process.env.ZOSMA_RELEASE === "1") {
-	const releaseClientId = (process.env.ZOSMA_GOOGLE_CLIENT_ID || "").trim();
-	const releaseBroker = (process.env.ZOSMA_OAUTH_BROKER_URL || "").trim();
-	if (!releaseClientId || !releaseBroker) {
-		throw new Error("production release requires ZOSMA_GOOGLE_CLIENT_ID and ZOSMA_OAUTH_BROKER_URL");
+const buildConfig = process.env.ZOSMA_RELEASE === "1"
+	? {
+			name: "production",
+			clientId: "830231223031-3ltm086u8ngc67ah5r1bk706g285ahkl.apps.googleusercontent.com",
+			broker: "https://broker-prod-uoux53xara-uc.a.run.app",
+			auth: "https://auth.zosma.ai",
+			router: "https://router.zosma.ai/v1",
+		}
+	: process.env.ZOSMA_STAGING === "1"
+		? {
+				name: "staging",
+				clientId: "830231223031-nuqrip1jo53pa55ithrrbu4jk0nu60s7.apps.googleusercontent.com",
+				broker: "https://broker-uoux53xara-uc.a.run.app",
+				auth: "https://auth.staging.zosma.ai",
+				router: "https://router.staging.zosma.ai/v1",
+			}
+		: null;
+if (buildConfig) {
+		const actual = {
+			clientId: (process.env.ZOSMA_GOOGLE_CLIENT_ID || "").trim(),
+			broker: (process.env.ZOSMA_OAUTH_BROKER_URL || "").trim(),
+			auth: (process.env.ZOSMA_AUTH_BASE_URL || "").trim(),
+			router: (process.env.ZOSMA_ROUTER_BASE_URL || "").trim(),
+		};
+		for (const key of ["clientId", "broker", "auth", "router"]) {
+			if (actual[key] !== buildConfig[key]) {
+				throw new Error(`${buildConfig.name} build has incorrect ${key} configuration`);
+			}
+		}
+		console.log(`[prebuild] ${buildConfig.name} endpoint configuration validated`);
 	}
-	if (releaseClientId !== "830231223031-3ltm086u8ngc67ah5r1bk706g285ahkl.apps.googleusercontent.com") {
-		throw new Error("production release must use the production Web OAuth client");
-	}
-	const releaseUrl = new URL(releaseBroker);
-	if (releaseUrl.protocol !== "https:" || releaseUrl.hostname !== "broker-prod-uoux53xara-uc.a.run.app") {
-		throw new Error("production release must target broker-prod-uoux53xara-uc.a.run.app");
-	}
-}
 for (const [token, envName] of [
 	["__ZOSMA_GOOGLE_CLIENT_ID__", "ZOSMA_GOOGLE_CLIENT_ID"],
 	["__ZOSMA_OAUTH_BROKER_URL__", "ZOSMA_OAUTH_BROKER_URL"],
+	["__ZOSMA_AUTH_BASE_URL__", "ZOSMA_AUTH_BASE_URL"],
+	["__ZOSMA_ROUTER_BASE_URL__", "ZOSMA_ROUTER_BASE_URL"],
 ]) {
 	const val = (process.env[envName] || "").trim();
 	if (val) {

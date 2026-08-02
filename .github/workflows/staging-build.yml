@@ -214,6 +214,13 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Public staging endpoints/client id. These are baked into the
+          # packaged sidecar because installed apps do not inherit CI env.
+          ZOSMA_STAGING: "1"
+          ZOSMA_GOOGLE_CLIENT_ID: "830231223031-nuqrip1jo53pa55ithrrbu4jk0nu60s7.apps.googleusercontent.com"
+          ZOSMA_OAUTH_BROKER_URL: "https://broker-uoux53xara-uc.a.run.app"
+          ZOSMA_AUTH_BASE_URL: "https://auth.staging.zosma.ai"
+          ZOSMA_ROUTER_BASE_URL: "https://router.staging.zosma.ai/v1"
           # TAURI_SIGNING_PRIVATE_KEY[_PASSWORD] are exported by the
           # "Provision updater signing key" step above (repo key on base-repo
           # runs, ephemeral key on fork PRs), so they are intentionally not
@@ -225,6 +232,10 @@ jobs:
           # workflow.
           args: ${{ matrix.args }}
           includeUpdaterJson: false
+
+      - name: Verify staging endpoints in bundled sidecar
+        shell: bash
+        run: node scripts/verify-staging-bundle.mjs
 
       - name: Collect bundles
         shell: bash

@@ -85,7 +85,7 @@ export const UNION_SCOPES: string[] = [...Object.values(GOOGLE_SCOPES), ...IDENT
 export const DEFAULT_BROKER_URL = "https://broker-uoux53xara-uc.a.run.app";
 /** Default (staging) public Web client id. Override with ZOSMA_GOOGLE_CLIENT_ID. */
 export const DEFAULT_CLIENT_ID =
-	"830231223031-pukjd742a01uau7oekvrs231fb737eo0.apps.googleusercontent.com";
+	"830231223031-nuqrip1jo53pa55ithrrbu4jk0nu60s7.apps.googleusercontent.com";
 
 // Build-time bake slots. scripts/prebuild.mjs replaces these literals with the
 // matching env var's value at `tauri build` time when set (so a packaged app
