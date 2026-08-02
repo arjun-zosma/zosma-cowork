@@ -7,7 +7,7 @@ import { AlertTriangle, Check, ChevronDown, Eye, EyeOff, Key, Loader2, Trash2 } 
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { safeError } from "../../hooks/useZosmaAuth";
-import { ClaudeIcon, GeminiIcon, GitHubIcon, OpenAIIcon } from "../BrandIcons"
+import { ClaudeIcon, GeminiIcon, GitHubIcon, OpenAIIcon } from "../BrandIcons";
 import { CustomProviderRow } from "./CustomProviderRow";
 import { ZosmaStatus } from "./ZosmaStatus";
 
@@ -99,9 +99,6 @@ export function Authentication({ onShowKeyEntry: _onShowKeyEntry }: Props) {
 
 				{/* API key management */}
 				<ApiKeyRow authStatus={authStatus} onSaved={refreshStatus} />
-
-				{/* Zosma Router managed provider */}
-				<ZosmaStatus authStatus={authStatus as Record<string, unknown>} onChange={refreshStatus} />
 
 				{/* Custom OpenAI-compatible endpoint (issue #207) */}
 				<CustomProviderRow onChange={refreshStatus} />
