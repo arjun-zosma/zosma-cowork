@@ -9,6 +9,7 @@
 // triggers it.
 
 import { execSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -107,25 +108,38 @@ function requireHttpsBaseUrl(name, value, pathname, rejectStaging) {
 
 if (buildMode) {
 	const clientId = (process.env.ZOSMA_GOOGLE_CLIENT_ID || "").trim();
+	const broker = (process.env.ZOSMA_OAUTH_BROKER_URL || "").trim();
+	const auth = (process.env.ZOSMA_AUTH_BASE_URL || "").trim();
+	const router = (process.env.ZOSMA_ROUTER_BASE_URL || "").trim();
+	if (buildMode === "production") {
+		const approvedFingerprint = (process.env.ZOSMA_RELEASE_CONFIG_FINGERPRINT || "").trim();
+		if (!approvedFingerprint) throw new Error("ZOSMA_RELEASE_CONFIG_FINGERPRINT secret is missing");
+		const actualFingerprint = createHash("sha256")
+			.update([clientId, broker, auth, router].join("\n"))
+			.digest("hex");
+		if (actualFingerprint !== approvedFingerprint) {
+			throw new Error("production config does not match the approved release fingerprint");
+		}
+	}
 	if (!/^\d+-[a-z0-9-]+\.apps\.googleusercontent\.com$/.test(clientId)) {
 		throw new Error("ZOSMA_GOOGLE_CLIENT_ID must be a valid Google OAuth client id");
 	}
 	const rejectStaging = buildMode === "production";
 	requireHttpsBaseUrl(
 		"ZOSMA_OAUTH_BROKER_URL",
-		(process.env.ZOSMA_OAUTH_BROKER_URL || "").trim(),
+		broker,
 		"/",
 		rejectStaging,
 	);
 	requireHttpsBaseUrl(
 		"ZOSMA_AUTH_BASE_URL",
-		(process.env.ZOSMA_AUTH_BASE_URL || "").trim(),
+		auth,
 		"/",
 		rejectStaging,
 	);
 	requireHttpsBaseUrl(
 		"ZOSMA_ROUTER_BASE_URL",
-		(process.env.ZOSMA_ROUTER_BASE_URL || "").trim(),
+		router,
 		"/v1",
 		rejectStaging,
 	);
@@ -142,7 +156,7 @@ for (const [token, envName] of [
 		code = code.split(token).join(val);
 		console.log(`[prebuild]   baked ${envName}`);
 	} else {
-		console.log(`[prebuild]   ${envName} unset — using committed staging default`);
+		console.log(`[prebuild]   ${envName} unset — leaving build slot unresolved`);
 	}
 }
 

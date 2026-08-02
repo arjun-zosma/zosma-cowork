@@ -119,7 +119,7 @@ Production release builds require these GitHub repository **Variables**:
 - `ZOSMA_AUTH_BASE_URL`
 - `ZOSMA_ROUTER_BASE_URL`
 
-Staging uses the corresponding `ZOSMA_STAGING_*` variables. CI validates that all build values are present, HTTPS, non-staging for production, and that the configured broker health check passes. The Tauri prebuild then bakes the environment values into the packaged app and fails closed when production values are missing.
+Staging uses the corresponding `ZOSMA_STAGING_*` variables. Production also requires the GitHub Actions Secret `ZOSMA_RELEASE_CONFIG_FINGERPRINT`, which binds the four production values to an approved configuration without putting them in source. CI validates that all build values are present, HTTPS, non-staging for production, match the approved fingerprint, and that the configured broker health check passes. The Tauri prebuild then bakes the environment values into the packaged app and fails closed when production values are missing or changed.
 
 Client IDs and endpoint URLs are public and may ship in the desktop bundle. Google client secrets stay in Google Secret Manager and are never passed to the desktop build. Do not add `ZOSMA_GOOGLE_CLIENT_SECRET` or any downloaded Google client JSON to a release environment; local credential files are gitignored.
 

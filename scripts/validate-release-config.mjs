@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 const config = {
 	clientId: (process.env.ZOSMA_GOOGLE_CLIENT_ID || "").trim(),
 	brokerUrl: (process.env.ZOSMA_OAUTH_BROKER_URL || "").trim(),
@@ -6,6 +8,8 @@ const config = {
 };
 
 if (!config.clientId) throw new Error("ZOSMA_GOOGLE_CLIENT_ID repository variable is missing");
+const approvedFingerprint = (process.env.ZOSMA_RELEASE_CONFIG_FINGERPRINT || "").trim();
+if (!approvedFingerprint) throw new Error("ZOSMA_RELEASE_CONFIG_FINGERPRINT secret is missing");
 if (!/^\d+-[a-z0-9-]+\.apps\.googleusercontent\.com$/.test(config.clientId)) {
 	throw new Error("ZOSMA_GOOGLE_CLIENT_ID is not a Google OAuth client id");
 }
@@ -30,6 +34,12 @@ function parseProductionUrl(name, value, pathname) {
 const brokerUrl = parseProductionUrl("ZOSMA_OAUTH_BROKER_URL", config.brokerUrl, "/");
 parseProductionUrl("ZOSMA_AUTH_BASE_URL", config.authBaseUrl, "/");
 parseProductionUrl("ZOSMA_ROUTER_BASE_URL", config.routerBaseUrl, "/v1");
+const actualFingerprint = createHash("sha256")
+	.update([config.clientId, config.brokerUrl, config.authBaseUrl, config.routerBaseUrl].join("\n"))
+	.digest("hex");
+if (actualFingerprint !== approvedFingerprint) {
+	throw new Error("production config does not match the approved release fingerprint");
+}
 
 const health = await fetch(new URL("/health", brokerUrl), {
 	signal: AbortSignal.timeout(15_000),

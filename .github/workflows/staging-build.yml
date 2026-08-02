@@ -4,14 +4,14 @@ name: Staging Build
 # Staging builds for internal testing.
 #
 # WHAT this does:
-#   - When a same-repository PR is labeled `staging` (or manually via
-#     `workflow_dispatch`), bundle the desktop app for macOS-universal,
-#     Linux-x64, Windows-x64.
+#   - When a PR is labeled `staging` (or manually via `workflow_dispatch`),
+#     bundle the desktop app for macOS-universal, Linux-x64, Windows-x64.
+#   - Fork PRs use `pull_request_target` as the trusted trigger context; the
+#     build receives public repository Variables and an ephemeral signing key.
 #   - Upload the installers as workflow artifacts (14 day retention).
 #   - Hand off to `staging-notify.yml` (a `workflow_run` workflow) which
 #     posts a Discord message with auth-free nightly.link download links
-#     and drops a sticky comment on the PR. Fork PRs are not built here because
-#     endpoint configuration must come from trusted repository Variables.
+#     and drops a sticky comment on the PR.
 #
 # WHY label-triggered, not push-to-main triggered:
 #   - Reviewers want to bash on the artifact BEFORE merging, not after. A
@@ -19,8 +19,8 @@ name: Staging Build
 #   - We don't want to burn 3 × 90-min runner-minutes on every push to every
 #     PR. The author / reviewer adds the `staging` label when the PR is at
 #     a "please test" state. Subsequent pushes to that labeled PR rebuild.
-#   - `workflow_dispatch` is the manual escape hatch for trusted refs
-#     (e.g. building from `main` post-merge, or from a release branch).
+#   - `workflow_dispatch` is the manual escape hatch for refs, including a
+#     PR head ref such as `refs/pull/123/head`.
 #
 # WHAT this DOES NOT do:
 #   - Does NOT create a GitHub Release. Production release flow is still
@@ -34,8 +34,8 @@ name: Staging Build
 #     step and the Windows "Run anyway" step).
 #   - Does NOT post to Discord / comment on the PR itself. Notification is
 #     split into a separate `workflow_run` workflow (`staging-notify.yml`).
-#     This workflow only builds same-repository code or a manually selected
-#     trusted ref, with endpoint configuration supplied by repository Variables.
+#     This workflow builds same-repository or fork PR code with read-only
+#     permissions, public repository Variables, and no protected secrets.
 #
 # Tracks zosmaai/zosma-cowork#133.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -49,10 +49,36 @@ on:
     #               LONG AS the staging label is still on the PR.
     # `reopened`    rebuild if a closed labeled PR is reopened.
     types: [labeled, synchronize, reopened]
+  pull_request_target:
+    types: [labeled, synchronize, reopened]
   workflow_dispatch:
     inputs:
+      repository:
+        description: "Repository to check out (defaults to this repository)"
+        required: false
+        type: string
       ref:
-        description: "Branch, tag, or SHA to build (defaults to default branch)"
+        description: "Branch, tag, SHA, or PR head ref to build"
+        required: false
+        type: string
+      artifact_sha:
+        description: "Commit SHA used in artifact names (for manual PR builds)"
+        required: false
+        type: string
+      pr_number:
+        description: "PR number for metadata/notification"
+        required: false
+        type: string
+      pr_url:
+        description: "PR URL for metadata/notification"
+        required: false
+        type: string
+      pr_title:
+        description: "PR title for metadata/notification"
+        required: false
+        type: string
+      actor:
+        description: "PR author for metadata/notification"
         required: false
         type: string
 
@@ -74,15 +100,14 @@ jobs:
     # Gate: only run when one of
     #   (a) the workflow was manually dispatched, OR
     #   (b) the PR carries the `staging` label.
-    # For `labeled` events specifically, `github.event.label.name` lets us
-    # avoid kicking a fresh build on every UNRELATED label add (e.g. someone
-    # adding `tech-debt`). Fork PRs are excluded because their workflows do
-    # not receive repository Variables. For `synchronize` / `reopened` the
-    # PR label set remains the source of truth.
+    # `pull_request_target` is used for fork PRs only; it exposes no protected
+    # secrets here and the job has contents:read permissions.
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.action == 'labeled' && github.event.label.name == 'staging') ||
-      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'staging'))
+      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'staging')) ||
+      (github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name != github.repository && github.event.action == 'labeled' && github.event.label.name == 'staging') ||
+      (github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name != github.repository && github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'staging'))
     strategy:
       fail-fast: false
       matrix:
@@ -103,8 +128,8 @@ jobs:
         with:
           # For PR builds, check out the PR head commit so the artifact
           # reflects the code under review, not the merge commit. For
-          # `workflow_dispatch` we honour the user-supplied ref, defaulting
-          # to the workflow's own branch (i.e. the default branch).
+          # `workflow_dispatch` we honour the supplied repository/ref.
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.event.inputs.repository || github.repository }}
           ref: ${{ github.event.pull_request.head.sha || github.event.inputs.ref || github.ref }}
 
       - name: Setup pnpm
@@ -169,46 +194,29 @@ jobs:
         run: echo "APPLE_SIGNING_IDENTITY=-" >> $GITHUB_ENV
 
       # `createUpdaterArtifacts` is enabled in tauri.conf.json (issue #271), so
-      # EVERY bundle build must sign the updater artifacts or the macOS / Windows
-      # bundlers fail with "failed to decode secret key". That key lives in repo
-      # secrets, which GitHub withholds from FORK PRs — so fork staging builds
-      # would always fail at signing. Staging never publishes a latest.json
-      # (`includeUpdaterJson: false`), so the key only has to be VALID, not the
-      # production one: use the repo key when present (base-repo runs keep
-      # signing with it), otherwise mint a throwaway key so fork PR staging
-      # builds still produce installable, testable artifacts.
-      - name: Provision updater signing key
+      # EVERY bundle build must sign updater artifacts. Staging artifacts are
+      # never published as release updates, so always use a throwaway key.
+      # Production signing secrets are reserved for trusted release workflows.
+      - name: Provision ephemeral staging updater signing key
         shell: bash
-        env:
-          REAL_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          REAL_PW: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          if [ -n "${REAL_KEY}" ]; then
-            echo "Using repository updater signing key."
-            KEY_VALUE="${REAL_KEY}"
-            KEY_PW="${REAL_PW}"
-          else
-            echo "No repo secret (fork PR) — generating an ephemeral staging key."
-            npx tauri signer generate --ci -w staging-signing.key
-            # Command substitution strips trailing newlines; printf below re-adds
-            # exactly one so the heredoc terminator stays on its own line.
-            KEY_VALUE="$(cat staging-signing.key)"
-            KEY_PW=""
-            rm -f staging-signing.key staging-signing.key.pub
-          fi
+          npx tauri signer generate --ci -w staging-signing.key
+          # Command substitution strips trailing newlines; printf below re-adds
+          # exactly one so the heredoc terminator stays on its own line.
+          KEY_VALUE="$(cat staging-signing.key)"
+          rm -f staging-signing.key staging-signing.key.pub
           echo "::add-mask::${KEY_VALUE}"
           {
             echo "TAURI_SIGNING_PRIVATE_KEY<<__KEY_EOF__"
             printf '%s\n' "${KEY_VALUE}"
             echo "__KEY_EOF__"
           } >> "${GITHUB_ENV}"
-          echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=${KEY_PW}" >> "${GITHUB_ENV}"
+          echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=" >> "${GITHUB_ENV}"
 
       - name: Build Tauri app (unsigned staging)
         uses: tauri-apps/tauri-action@v0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Staging values come from repository Variables and are baked into
           # the package because installed apps do not inherit CI env.
           ZOSMA_STAGING: "1"
@@ -217,9 +225,7 @@ jobs:
           ZOSMA_AUTH_BASE_URL: ${{ vars.ZOSMA_STAGING_AUTH_BASE_URL }}
           ZOSMA_ROUTER_BASE_URL: ${{ vars.ZOSMA_STAGING_ROUTER_BASE_URL }}
           # TAURI_SIGNING_PRIVATE_KEY[_PASSWORD] are exported by the
-          # "Provision updater signing key" step above (repo key on base-repo
-          # runs, ephemeral key on fork PRs), so they are intentionally not
-          # re-declared here.
+          # ephemeral-key step above and are intentionally not re-declared here.
         with:
           # IMPORTANT: no `tagName` / `releaseName` / `releaseDraft` keys.
           # When those are absent, tauri-action only builds — it does not
@@ -283,8 +289,8 @@ jobs:
           # (staging-notify.yml) reconstructs the same string from the
           # `artifact_sha` saved by the save-meta job below. For PR builds
           # this is the PR head SHA (matches the checkout ref above); for
-          # workflow_dispatch it falls back to `github.sha`.
-          name: zosma-cowork-staging-${{ matrix.name }}-${{ github.event.pull_request.head.sha || github.sha }}
+          # workflow_dispatch use the explicit artifact SHA when provided.
+          name: zosma-cowork-staging-${{ matrix.name }}-${{ github.event.pull_request.head.sha || github.event.inputs.artifact_sha || github.sha }}
           path: staging-out/*
           if-no-files-found: error
           # 14 days = ~2 sprints. Long enough to be useful, short enough
@@ -310,7 +316,9 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.action == 'labeled' && github.event.label.name == 'staging') ||
-      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'staging'))
+      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'staging')) ||
+      (github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name != github.repository && github.event.action == 'labeled' && github.event.label.name == 'staging') ||
+      (github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name != github.repository && github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'staging'))
     runs-on: ubuntu-latest
     steps:
       - name: Write metadata
@@ -318,11 +326,11 @@ jobs:
           # The exact SHA baked into the artifact names above — the notify
           # workflow reconstructs the nightly.link URLs from this, removing
           # any guesswork about merge-commit vs head-commit SHAs.
-          ARTIFACT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          ACTOR: ${{ github.actor }}
+          ARTIFACT_SHA: ${{ github.event.pull_request.head.sha || github.event.inputs.artifact_sha || github.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
+          PR_URL: ${{ github.event.pull_request.html_url || github.event.inputs.pr_url }}
+          PR_TITLE: ${{ github.event.pull_request.title || github.event.inputs.pr_title }}
+          ACTOR: ${{ github.event.pull_request.user.login || github.event.inputs.actor || github.actor }}
           EVENT_NAME: ${{ github.event_name }}
           DISPATCH_REF: ${{ github.event.inputs.ref }}
         run: |
