@@ -67,6 +67,9 @@ const antigravitySecret =
 	(process.env.ANTIGRAVITY_CLIENT_SECRET || "").trim() ||
 	(existsSync(secretFile) ? readFileSync(secretFile, "utf-8").trim() : "");
 if (antigravitySecret) {
+	if (process.env.ZOSMA_RELEASE === "1") {
+		throw new Error("production release must not embed a Google client secret");
+	}
 	code = code.split("__ANTIGRAVITY_CLIENT_SECRET__").join(antigravitySecret);
 	writeFileSync(bundlePath, code, "utf-8");
 	console.log("[prebuild]   client secret injected");
@@ -80,6 +83,20 @@ if (antigravitySecret) {
 // build with neither env var set still works against staging; a prod release
 // sets ZOSMA_GOOGLE_CLIENT_ID / ZOSMA_OAUTH_BROKER_URL to override.
 console.log("[prebuild] Injecting Zosma Google OAuth config (public)...");
+if (process.env.ZOSMA_RELEASE === "1") {
+	const releaseClientId = (process.env.ZOSMA_GOOGLE_CLIENT_ID || "").trim();
+	const releaseBroker = (process.env.ZOSMA_OAUTH_BROKER_URL || "").trim();
+	if (!releaseClientId || !releaseBroker) {
+		throw new Error("production release requires ZOSMA_GOOGLE_CLIENT_ID and ZOSMA_OAUTH_BROKER_URL");
+	}
+	if (releaseClientId !== "830231223031-3ltm086u8ngc67ah5r1bk706g285ahkl.apps.googleusercontent.com") {
+		throw new Error("production release must use the production Web OAuth client");
+	}
+	const releaseUrl = new URL(releaseBroker);
+	if (releaseUrl.protocol !== "https:" || releaseUrl.hostname !== "broker-prod-uoux53xara-uc.a.run.app") {
+		throw new Error("production release must target broker-prod-uoux53xara-uc.a.run.app");
+	}
+}
 for (const [token, envName] of [
 	["__ZOSMA_GOOGLE_CLIENT_ID__", "ZOSMA_GOOGLE_CLIENT_ID"],
 	["__ZOSMA_OAUTH_BROKER_URL__", "ZOSMA_OAUTH_BROKER_URL"],
@@ -93,18 +110,8 @@ for (const [token, envName] of [
 	}
 }
 
-// OPT-IN: bake the Zosma Google client SECRET ("Option A"). Off by default —
-// when ZOSMA_GOOGLE_CLIENT_SECRET is unset, the placeholder stays unreplaced and
-// the brokered secretless flow remains in effect. When set, the secret is baked
-// so the upstream pi-google-workspace + @e9n/pi-gmail extensions can self-refresh
-// directly with Google. Only do this for a Desktop/Installed OAuth client type.
-const zosmaGoogleSecret = (process.env.ZOSMA_GOOGLE_CLIENT_SECRET || "").trim();
-if (zosmaGoogleSecret) {
-	code = code.split("__ZOSMA_GOOGLE_CLIENT_SECRET__").join(zosmaGoogleSecret);
-	console.log("[prebuild]   baked ZOSMA_GOOGLE_CLIENT_SECRET (direct-refresh enabled)");
-} else {
-	console.log("[prebuild]   ZOSMA_GOOGLE_CLIENT_SECRET unset — brokered secretless flow (default)");
-}
+// No Zosma Google client secret is accepted here. Desktop bundles are
+// extractable; the Web client secret stays in the OAuth broker's Secret Manager.
 writeFileSync(bundlePath, code, "utf-8");
 
 // Copy bundled file into src-tauri/ for Tauri resource bundling

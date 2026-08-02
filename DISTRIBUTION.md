@@ -110,6 +110,12 @@ git push origin --tags
 
 The release is drafted automatically. Go to the [Releases page](https://github.com/zosmaai/zosma-cowork/releases) to publish it.
 
+### Production OAuth release guardrails
+
+Production release builds require GitHub repository variables `ZOSMA_GOOGLE_CLIENT_ID` and `ZOSMA_OAUTH_BROKER_URL`. CI validates the exact production broker host and `/health` response before building, then the Tauri prebuild fails closed instead of falling back to staging.
+
+The client ID is public and may ship in the desktop bundle. The matching Google client secret stays in the OAuth broker's Google Secret Manager entry and is never passed to the desktop build. Do not add `ZOSMA_GOOGLE_CLIENT_SECRET` or any downloaded Google client JSON to a release environment; local credential files are gitignored.
+
 When the release is **published**, the following automatic actions happen:
 
 1. [Chatter](https://github.com/zosmaai/homebrew-tap) — Updates the Homebrew Cask formula

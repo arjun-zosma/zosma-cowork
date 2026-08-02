@@ -356,4 +356,16 @@ describe("ApiKeyRow — delete saved key", () => {
 			});
 		});
 	});
+
+	it("renders Zosma before subscription and API-key rows", async () => {
+		configureSidecar();
+		render(<Authentication />);
+
+		await waitFor(() => expect(screen.getByText("Zosma AI Router")).toBeInTheDocument());
+		const zosma = screen.getByText("Zosma AI Router");
+		const claude = screen.getByText("Claude Pro/Max");
+		const apiKey = screen.getByText("API key");
+		expect(zosma.compareDocumentPosition(claude) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		expect(claude.compareDocumentPosition(apiKey) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+	});
 });

@@ -9,6 +9,7 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
+import { safeError } from "../hooks/useZosmaAuth";
 import { log } from "../lib/log";
 import { type UnlistenFn, listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -174,7 +175,7 @@ export function ProviderAuthSection({ provider, compact = false, onChange }: Pro
 					setStatusMessage(null);
 					setUserCode(null);
 					setVerificationUrl(null);
-					setError(e.payload.error ?? "Sign-in failed");
+					setError(safeError(e.payload.error ?? "Sign-in failed"));
 				}),
 				listen<{ provider: string }>("oauth_cancelled", (e) => {
 					if (e.payload?.provider !== provider) return;
@@ -216,11 +217,11 @@ export function ProviderAuthSection({ provider, compact = false, onChange }: Pro
 				error?: string;
 			}>("start_oauth", { provider });
 			if (!result.success && !result.cancelled) {
-				setError(result.error ?? "Sign-in failed");
+				setError(safeError(result.error ?? "Sign-in failed"));
 				setPhase("idle");
 			}
 		} catch (err) {
-			setError(err instanceof Error ? err.message : String(err));
+			setError(safeError(err));
 			setPhase("idle");
 		}
 	}, [provider]);

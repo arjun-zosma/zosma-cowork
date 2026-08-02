@@ -13,7 +13,24 @@ permissions:
   contents: write
 
 jobs:
+  validate-production-config:
+    name: Validate production OAuth config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Verify production broker and public client id
+        env:
+          ZOSMA_GOOGLE_CLIENT_ID: ${{ vars.ZOSMA_GOOGLE_CLIENT_ID }}
+          ZOSMA_OAUTH_BROKER_URL: ${{ vars.ZOSMA_OAUTH_BROKER_URL }}
+        run: node scripts/validate-release-config.mjs
+
   build:
+    needs: validate-production-config
     name: ${{ matrix.name }}
     timeout-minutes: 90
     strategy:
@@ -234,6 +251,9 @@ jobs:
           # them unset → staging defaults.
           ZOSMA_GOOGLE_CLIENT_ID: ${{ vars.ZOSMA_GOOGLE_CLIENT_ID }}
           ZOSMA_OAUTH_BROKER_URL: ${{ vars.ZOSMA_OAUTH_BROKER_URL }}
+          # Makes prebuild fail closed if release variables are not passed into
+          # the Tauri build command; it must never fall back to staging.
+          ZOSMA_RELEASE: "1"
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "${{ github.ref_name }}"

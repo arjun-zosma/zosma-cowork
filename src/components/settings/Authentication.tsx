@@ -6,7 +6,8 @@ import { type UnlistenFn, listen } from "@tauri-apps/api/event";
 import { AlertTriangle, Check, ChevronDown, Eye, EyeOff, Key, Loader2, Trash2 } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ClaudeIcon, GeminiIcon, GitHubIcon, OpenAIIcon } from "../BrandIcons";
+import { safeError } from "../../hooks/useZosmaAuth";
+import { ClaudeIcon, GeminiIcon, GitHubIcon, OpenAIIcon } from "../BrandIcons"
 import { CustomProviderRow } from "./CustomProviderRow";
 import { ZosmaStatus } from "./ZosmaStatus";
 
@@ -82,6 +83,9 @@ export function Authentication({ onShowKeyEntry: _onShowKeyEntry }: Props) {
 				Connect your AI subscriptions — no keys stored in the cloud.
 			</p>
 			<div className="space-y-2">
+				{/* Zosma Router is the first authentication choice. */}
+				<ZosmaStatus authStatus={authStatus as Record<string, unknown>} onChange={refreshStatus} />
+
 				{PROVIDERS_CONFIG.map((p) => (
 					<AuthRow
 						key={p.id}
@@ -93,11 +97,8 @@ export function Authentication({ onShowKeyEntry: _onShowKeyEntry }: Props) {
 					/>
 				))}
 
-				{/* Inline API key row */}
+				{/* API key management */}
 				<ApiKeyRow authStatus={authStatus} onSaved={refreshStatus} />
-
-				{/* Zosma Router managed provider */}
-				<ZosmaStatus authStatus={authStatus as Record<string, unknown>} onChange={refreshStatus} />
 
 				{/* Custom OpenAI-compatible endpoint (issue #207) */}
 				<CustomProviderRow onChange={refreshStatus} />
@@ -177,7 +178,7 @@ function AuthRow({
 					setStatusMessage(null);
 					setUserCode(null);
 					setVerificationUrl(null);
-					setError(e.payload.error ?? "Sign-in failed");
+					setError(safeError(e.payload.error ?? "Sign-in failed"));
 				}),
 				listen<{ provider: string }>("oauth_cancelled", (e) => {
 					if (e.payload?.provider !== provider) return;
@@ -212,11 +213,11 @@ function AuthRow({
 				{ provider },
 			);
 			if (!result.success && !result.cancelled) {
-				setError(result.error ?? "Sign-in failed");
+				setError(safeError(result.error ?? "Sign-in failed"));
 				setPhase("idle");
 			}
 		} catch (err) {
-			setError(err instanceof Error ? err.message : String(err));
+			setError(safeError(err));
 			setPhase("idle");
 		}
 	}, [provider]);
