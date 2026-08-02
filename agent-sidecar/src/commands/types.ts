@@ -101,6 +101,11 @@ export interface GetAuthStatusCommand {
 	id: string;
 }
 
+export interface GetOnboardingStatusCommand {
+	type: "get_onboarding_status";
+	id: string;
+}
+
 // ── Custom provider commands (issue #207) ──────────────────────────────────
 
 export interface ListCustomProvidersCommand {
@@ -442,6 +447,7 @@ export type Command =
 	| CancelOAuthCommand
 	| LogoutCommand
 	| GetAuthStatusCommand
+	| GetOnboardingStatusCommand
 	| ListCustomProvidersCommand
 	| SaveCustomProviderCommand
 	| DeleteCustomProviderCommand

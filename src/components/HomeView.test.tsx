@@ -78,9 +78,15 @@ function configureSidecar(
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 async function advanceToConnectScreen() {
-	const cta = screen.getByRole("button", { name: /connect your ai/i });
+	const cta = screen.queryByRole("button", { name: /connect your ai/i });
+	if (cta) {
+		await act(async () => {
+			fireEvent.click(cta);
+		});
+	}
+	const moreWays = screen.getByRole("button", { name: /more ways to connect/i });
 	await act(async () => {
-		fireEvent.click(cta);
+		fireEvent.click(moreWays);
 	});
 }
 
@@ -339,6 +345,40 @@ describe("HomeView — Zosma auth card", () => {
 		process.env.VITE_ZOSMA_AUTH_ENABLED = undefined;
 	});
 
+	it("initialStep=connect skips splash and collapses alternatives", () => {
+		render(<HomeView initialStep="connect" onComplete={vi.fn()} />);
+
+		expect(screen.getByText(/continue with zosma/i)).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /more ways to connect/i })).toHaveAttribute(
+			"aria-expanded",
+			"false",
+		);
+		expect(screen.queryByText(/^api key$/i)).not.toBeInTheDocument();
+	});
+
+	it("splash has no connect CTA and transitions to login", async () => {
+		vi.useFakeTimers();
+		render(<HomeView initialStep="splash" onComplete={vi.fn()} />);
+
+		expect(screen.queryByRole("button", { name: /connect your ai/i })).not.toBeInTheDocument();
+		await act(async () => {
+			vi.advanceTimersByTime(1400);
+		});
+		expect(screen.getByText(/continue with zosma/i)).toBeInTheDocument();
+		vi.useRealTimers();
+	});
+
+	it("expands existing provider journeys without hiding Zosma", async () => {
+		render(<HomeView initialStep="connect" onComplete={vi.fn()} />);
+		fireEvent.click(screen.getByRole("button", { name: /more ways to connect/i }));
+
+		expect(screen.getByText(/continue with zosma/i)).toBeInTheDocument();
+		expect(screen.getByText(/^api key$/i)).toBeInTheDocument();
+		expect(screen.getByText(/claude pro\/max/i)).toBeInTheDocument();
+		expect(screen.getByText(/chatgpt/i)).toBeInTheDocument();
+		expect(screen.getByText(/github copilot/i)).toBeInTheDocument();
+	});
+
 	it("renders 'Continue with Zosma' card on connect screen", async () => {
 		render(<HomeView onComplete={vi.fn()} />);
 		await advanceToConnectScreen();
@@ -352,8 +392,8 @@ describe("HomeView — Zosma auth card", () => {
 		render(<HomeView onComplete={vi.fn()} />);
 		await advanceToConnectScreen();
 
-		const zosmaCard = screen.getByText(/continue with zosma/i).closest(".rounded-xl");
-		const apiKeyCard = screen.getByText(/api key/i).closest(".rounded-xl");
+		const zosmaCard = screen.getByText(/continue with zosma/i).closest(".border");
+		const apiKeyCard = screen.getByText(/api key/i).closest(".border");
 
 		expect(zosmaCard).toBeTruthy();
 		expect(apiKeyCard).toBeTruthy();

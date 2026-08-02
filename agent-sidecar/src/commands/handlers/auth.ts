@@ -62,16 +62,44 @@ export async function handleStartOAuth(deps: HandlerDependencies, cmd: any): Pro
 
 		const runOAuth = async () => {
 			try {
-				const result = await deps.authStorage!.login(provider, {
+				await deps.authStorage!.login(provider, {
+					onAuth: ({ url, instructions }: { url: string; instructions?: string }) => {
+						sendMsg({
+							type: "event",
+							event: { kind: "oauth_open_url", provider, url, instructions },
+						});
+					},
+					onDeviceCode: ({ userCode, verificationUri }: { userCode: string; verificationUri: string }) => {
+						sendMsg({
+							type: "event",
+							event: {
+								kind: "oauth_open_url",
+								provider,
+								url: verificationUri,
+								instructions: `Enter code: ${userCode}`,
+							},
+						});
+					},
+					onProgress: (message: string) => {
+						sendMsg({
+							type: "event",
+							event: { kind: "oauth_progress", provider, message },
+						});
+					},
+					// GitHub's normal flow accepts the public github.com default.
+					// Browser-based Anthropic/OpenAI flows do not prompt unless their
+					// callback server cannot complete.
+					onPrompt: async () => "",
+					onSelect: async (prompt: { options: Array<{ id: string; label: string }> }) =>
+						prompt.options.find((option) => /browser/i.test(option.label))?.id ?? prompt.options[0]?.id,
 					signal: abort.signal,
 				} as any);
-				sendMsg({ type: "event", event: { type: "oauth_result", provider, ...result } });
 				deps.modelRegistry!.refresh();
-				sendMsg({ type: "event", event: { type: "oauth_complete", provider } });
+				sendMsg({ type: "event", event: { kind: "oauth_completed", provider } });
 			} catch (err: unknown) {
 				if (abort.signal.aborted) return;
 				const message = err instanceof Error ? err.message : String(err);
-				sendMsg({ type: "event", event: { type: "oauth_error", provider, message } });
+				sendMsg({ type: "event", event: { kind: "oauth_failed", provider, error: message } });
 			} finally {
 				deps.setOauthInflight(null);
 			}
@@ -79,7 +107,7 @@ export async function handleStartOAuth(deps: HandlerDependencies, cmd: any): Pro
 		const inflight = runOAuth();
 		deps.setOauthInflight(inflight);
 
-		sendMsg({ type: "result", id: cmd.id, data: { started: true, provider } });
+		sendMsg({ type: "result", id: cmd.id, data: { success: true, started: true, provider } });
 	} catch (err: unknown) {
 		const msg = err instanceof Error ? err.message : String(err);
 		sendMsg({ type: "error", id: cmd.id, message: msg });

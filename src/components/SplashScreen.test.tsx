@@ -25,5 +25,6 @@ describe("SplashScreen", () => {
 	it("renders a spinner element", () => {
 		const { container } = render(<SplashScreen />);
 		expect(container.querySelector(".animate-spin")).not.toBeNull();
+		expect(screen.queryByRole("button", { name: /connect your ai/i })).toBeNull();
 	});
 });

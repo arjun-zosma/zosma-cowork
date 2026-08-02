@@ -61,11 +61,11 @@ vi.mock("@/components/SplashScreen", () => ({
 }));
 
 vi.mock("@/components/HomeView", () => ({
-	HomeView: () => <div data-testid="home" />,
+	HomeView: () => <div data-testid="zosma-connect" />,
 }));
 
-vi.mock("@/components/ZosmaLoginScreen", () => ({
-	ZosmaLoginScreen: () => <div data-testid="zosma-login" />,
+vi.mock("@/components/ZosmaRouterAnnouncement", () => ({
+	ZosmaRouterAnnouncement: () => <div data-testid="zosma-announcement" />,
 }));
 
 vi.mock("@/components/Sidebar", () => ({
@@ -111,6 +111,8 @@ describe("App telemetry integration", () => {
 		mockInvoke.mockImplementation((cmd) => {
 			if (cmd === "get_settings") return Promise.resolve({ telemetry: { enabled: true } });
 			if (cmd === "list_sessions") return Promise.resolve({ sessions: [] });
+			if (cmd === "get_onboarding_status")
+				return Promise.resolve({ hasExistingSetup: false, zosmaConnected: false });
 			return Promise.resolve(null);
 		});
 	});
@@ -125,9 +127,10 @@ describe("App telemetry integration", () => {
 		expect(mockUseTelemetry).toHaveBeenCalledTimes(1);
 	});
 
-	it("shows Zosma login before chat when no credentials exist", () => {
+	it("shows Zosma-first connect screen when no existing setup exists", async () => {
 		const { getByTestId, queryByTestId } = render(<App />);
-		expect(getByTestId("zosma-login")).toBeInTheDocument();
+		await new Promise((r) => setTimeout(r, 50));
+		expect(getByTestId("zosma-connect")).toBeInTheDocument();
 		expect(queryByTestId("chat")).not.toBeInTheDocument();
 	});
 });

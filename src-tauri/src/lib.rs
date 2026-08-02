@@ -49,6 +49,9 @@ struct AppState {
     sidecar: SidecarState,
     pending_prompts: Arc<Mutex<HashMap<String, PendingPrompt>>>,
     pending_requests: Arc<Mutex<HashMap<String, PendingRequest>>>,
+    // Captured before the sidecar can create models.json. Prevents a fresh
+    // install from being reclassified as an existing user during startup.
+    fresh_start: Arc<AtomicBool>,
 }
 
 /// Strip the Windows `\\?\` extended-length path prefix.
@@ -407,9 +410,10 @@ async fn spawn_sidecar(
     for a in &run_args {
         c.arg(a);
     }
-    // Cowork owns a private Pi state directory. This keeps its router account
-    // and models independent from a user's Pi CLI installation.
-    c.env("ZOSMA_PI_AGENT_DIR", PathBuf::from(zm).join("pi-agent"));
+    // Use normal Pi state directory (~/.pi/agent) in production so existing
+    // Pi users are recognized. The sidecar defaults there via piAgentDir().
+    // An explicitly exported ZOSMA_PI_AGENT_DIR is inherited automatically for
+    // development and tests; do not force a private directory here.
     // Set the sidecar log verbosity unless the caller already exported it.
     // Release builds default to `warn` (errors + warnings only) so production
     // stays quiet; dev builds default to `debug` for full tracing.
@@ -912,12 +916,16 @@ async fn save_auth_key(
     key: String,
     s: State<'_, AppState>,
 ) -> Result<Value, String> {
-    scmd_r(
+    let result = scmd_r(
         &s,
         &serde_json::json!({"type":"save_auth","id":"sa","provider":provider,"key":key}),
         std::time::Duration::from_secs(30),
     )
-    .await
+    .await;
+    if result.is_ok() {
+        s.fresh_start.store(false, Ordering::Release);
+    }
+    result
 }
 
 /// Validate a provider API key via format check + optional live probe.
@@ -958,12 +966,16 @@ async fn save_custom_provider(provider: Value, s: State<'_, AppState>) -> Result
     // initAgent() reloads the agent from disk; allow the same 30s budget as
     // save_auth_key. Validation errors come back via the sidecar `error`
     // channel and surface as Err here.
-    scmd_r(
+    let result = scmd_r(
         &s,
         &serde_json::json!({"type":"save_custom_provider","id":"scp","provider":provider}),
         std::time::Duration::from_secs(30),
     )
-    .await
+    .await;
+    if result.is_ok() {
+        s.fresh_start.store(false, Ordering::Release);
+    }
+    result
 }
 
 #[tauri::command]
@@ -1038,6 +1050,75 @@ async fn get_auth_status(s: State<'_, AppState>) -> Result<Value, String> {
     scmd_r(
         &s,
         &serde_json::json!({"type":"get_auth_status","id":id}),
+        std::time::Duration::from_secs(10),
+    )
+    .await
+}
+
+fn pi_agent_dir_path() -> PathBuf {
+    if let Ok(explicit) = std::env::var("ZOSMA_PI_AGENT_DIR") {
+        if !explicit.trim().is_empty() {
+            return PathBuf::from(explicit);
+        }
+    }
+
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_default();
+    PathBuf::from(home).join(".pi").join("agent")
+}
+
+fn has_pi_state_files(agent_dir: &Path) -> bool {
+    agent_dir.join("auth.json").is_file() || agent_dir.join("models.json").is_file()
+}
+
+/// Baseline Pi files are created during startup and do not mean user setup.
+/// Only stored credentials or custom model providers count here.
+fn has_local_user_setup(agent_dir: &Path) -> bool {
+    let auth_has_entries = fs::read_to_string(agent_dir.join("auth.json"))
+        .ok()
+        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+        .and_then(|value| value.as_object().map(|entries| !entries.is_empty()))
+        .unwrap_or(false);
+    if auth_has_entries {
+        return true;
+    }
+
+    fs::read_to_string(agent_dir.join("models.json"))
+        .ok()
+        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+        .and_then(|value| {
+            value
+                .get("providers")?
+                .as_object()
+                .map(|providers| !providers.is_empty())
+        })
+        .unwrap_or(false)
+}
+
+fn is_fresh_start(fresh_start: bool, agent_dir: &Path) -> bool {
+    !has_local_user_setup(agent_dir) || (fresh_start && !agent_dir.join("auth.json").is_file())
+}
+
+/// Non-secret startup status for onboarding routing.
+/// Returns `{ hasExistingSetup, zosmaConnected }` and no credentials.
+#[tauri::command]
+async fn get_onboarding_status(s: State<'_, AppState>) -> Result<Value, String> {
+    // Fresh installs do not need Pi/sidecar readiness. This lets the login
+    // screen replace startup splash immediately while returning users still
+    // use sidecar classification for saved providers and models.
+    let agent_dir = pi_agent_dir_path();
+    if is_fresh_start(s.fresh_start.load(Ordering::Acquire), &agent_dir) {
+        return Ok(serde_json::json!({
+            "hasExistingSetup": false,
+            "zosmaConnected": false,
+        }));
+    }
+
+    let id = format!("gos-{}", uuid_v4());
+    scmd_r(
+        &s,
+        &serde_json::json!({"type":"get_onboarding_status","id":id}),
         std::time::Duration::from_secs(10),
     )
     .await
@@ -2103,7 +2184,7 @@ async fn complete_zosma_auth(
     s: State<'_, AppState>,
 ) -> Result<Value, String> {
     let id = format!("zc-{}", uuid_v4());
-    scmd_r(
+    let result = scmd_r(
         &s,
         &serde_json::json!({
             "type": "complete_zosma_auth",
@@ -2113,7 +2194,11 @@ async fn complete_zosma_auth(
         }),
         std::time::Duration::from_secs(20),
     )
-    .await
+    .await;
+    if result.is_ok() {
+        s.fresh_start.store(false, Ordering::Release);
+    }
+    result
 }
 
 /// Cancel an in-progress Zosma auth flow. Deletes pending PKCE state.
@@ -2304,7 +2389,10 @@ pub fn run() {
             }
 
             let h = app.handle().clone();
-            let st: AppState = AppState::default();
+            let st = AppState {
+                fresh_start: Arc::new(AtomicBool::new(!has_pi_state_files(&pi_agent_dir_path()))),
+                ..AppState::default()
+            };
             // Resolve zosma dir. On Windows, GUI apps don't inherit HOME
             // (that's a POSIX convention) — the equivalent is USERPROFILE.
             // Falling through to /tmp/.zosmaai on Windows causes auth.json
@@ -2412,6 +2500,7 @@ pub fn run() {
             get_zosma_usage,
             configure_router,
             get_auth_status,
+            get_onboarding_status,
             has_credentials,
             google_connect,
             gh_auth_status,
@@ -2463,8 +2552,41 @@ pub fn run() {
 mod tests {
     use super::{
         build_clear_queue_payload, build_follow_up_payload, build_install_context,
-        build_steer_payload,
+        build_steer_payload, has_pi_state_files, is_fresh_start,
     };
+
+    #[test]
+    fn fresh_agent_directory_has_no_pi_state() {
+        let dir = std::env::temp_dir().join(format!("zosma-cowork-fresh-{}", super::uuid_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(!has_pi_state_files(&dir));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn agent_directory_with_models_is_not_fresh() {
+        let dir = std::env::temp_dir().join(format!("zosma-cowork-state-{}", super::uuid_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("models.json"), b"{}").unwrap();
+        assert!(has_pi_state_files(&dir));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn fresh_snapshot_stays_fresh_when_sidecar_creates_models_file() {
+        let dir = std::env::temp_dir().join(format!("zosma-cowork-startup-{}", super::uuid_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("models.json"), b"{}").unwrap();
+        assert!(is_fresh_start(true, &dir));
+        assert!(is_fresh_start(false, &dir));
+        std::fs::write(
+            dir.join("models.json"),
+            br#"{"providers":{"custom-local-llm":{"baseUrl":"http://localhost"}}}"#,
+        )
+        .unwrap();
+        assert!(!is_fresh_start(false, &dir));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     // ── In-app updater install context (#271) ───────────────────────────
 

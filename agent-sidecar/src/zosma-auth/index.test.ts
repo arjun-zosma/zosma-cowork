@@ -62,8 +62,8 @@ import * as customProviders from "../custom-providers.js";
 // ── Helpers ───────────────────────────────────────────────────────────────
 
 const PI_DIR = "/tmp/test-pi";
-const LOCAL_AUTH = "http://localhost:0/auth";
-const LOCAL_ROUTER = "http://localhost:0/router/v1";
+const LOCAL_AUTH = "https://auth.example.test";
+const LOCAL_ROUTER = "https://router.example.test/v1";
 
 function makeDeps(
 	overrides?: Partial<HandlerDependencies>,
@@ -115,6 +115,13 @@ beforeEach(() => {
 // ── Tests ─────────────────────────────────────────────────────────────────
 
 describe("startZosmaAuth", () => {
+	it("fails closed when auth configuration is absent", async () => {
+		setZosmaAuthConfig({ authBaseUrl: "", routerBaseUrl: "", fetch: vi.fn() });
+
+		await expect(startZosmaAuth(PI_DIR)).rejects.toThrow("ZOSMA_AUTH_BASE_URL is not configured");
+		expect(state.savePending).not.toHaveBeenCalled();
+	});
+
 	it("persists pending transaction BEFORE network call", async () => {
 		const fetch = vi.fn().mockRejectedValue(new Error("network error"));
 		setZosmaAuthConfig({ fetch });
@@ -215,7 +222,11 @@ describe("completeZosmaAuth", () => {
 	});
 
 	it("bad token response deletes pending without provider writes", async () => {
-		(state.loadPending as Mock).mockReturnValue({ state: "mocked-state", codeVerifier: "verifier", deviceId: "dev" });
+		(state.loadPending as Mock).mockReturnValue({
+			state: "mocked-state",
+			codeVerifier: "verifier",
+			deviceId: "dev",
+		});
 		setZosmaAuthConfig({ fetch: mockFetchResponse(401, {}) });
 
 		await expect(completeZosmaAuth("code", "mocked-state", PI_DIR, makeDeps())).rejects.toThrow(
@@ -226,21 +237,35 @@ describe("completeZosmaAuth", () => {
 	});
 
 	it("bad catalog response deletes pending without provider writes", async () => {
-		(state.loadPending as Mock).mockReturnValue({ state: "mocked-state", codeVerifier: "verifier", deviceId: "dev" });
+		(state.loadPending as Mock).mockReturnValue({
+			state: "mocked-state",
+			codeVerifier: "verifier",
+			deviceId: "dev",
+		});
 		// Token success, catalog failure
 		const fetch = vi
 			.fn()
-			.mockResolvedValueOnce({ ok: true, status: 200, json: vi.fn().mockResolvedValue(mockTokenBody()) })
+			.mockResolvedValueOnce({
+				ok: true,
+				status: 200,
+				json: vi.fn().mockResolvedValue(mockTokenBody()),
+			})
 			.mockResolvedValueOnce({ ok: false, status: 403, json: vi.fn().mockResolvedValue({}) });
 		setZosmaAuthConfig({ fetch });
 
-		await expect(completeZosmaAuth("code", "mocked-state", PI_DIR, makeDeps())).rejects.toThrow("403");
+		await expect(completeZosmaAuth("code", "mocked-state", PI_DIR, makeDeps())).rejects.toThrow(
+			"403",
+		);
 		expect(state.deletePending).toHaveBeenCalledWith(PI_DIR);
 		expect(customProviders.saveCustomProvider).not.toHaveBeenCalled();
 	});
 
 	it("catalog metadata maps exact Pi capability fields", async () => {
-		(state.loadPending as Mock).mockReturnValue({ state: "mocked-state", codeVerifier: "verifier", deviceId: "dev" });
+		(state.loadPending as Mock).mockReturnValue({
+			state: "mocked-state",
+			codeVerifier: "verifier",
+			deviceId: "dev",
+		});
 		const models = [
 			{
 				id: "provider/model-1",
@@ -261,7 +286,11 @@ describe("completeZosmaAuth", () => {
 		];
 		const fetch = vi
 			.fn()
-			.mockResolvedValueOnce({ ok: true, status: 200, json: vi.fn().mockResolvedValue(mockTokenBody()) })
+			.mockResolvedValueOnce({
+				ok: true,
+				status: 200,
+				json: vi.fn().mockResolvedValue(mockTokenBody()),
+			})
 			.mockResolvedValueOnce({
 				ok: true,
 				status: 200,
@@ -298,11 +327,26 @@ describe("completeZosmaAuth", () => {
 	});
 
 	it("missing input field becomes text-only", async () => {
-		(state.loadPending as Mock).mockReturnValue({ state: "mocked-state", codeVerifier: "verifier", deviceId: "dev" });
-		const model = { id: "p/m", display_name: "M", input: undefined, context_window: 8_000, max_tokens: 2_000, reasoning: false };
+		(state.loadPending as Mock).mockReturnValue({
+			state: "mocked-state",
+			codeVerifier: "verifier",
+			deviceId: "dev",
+		});
+		const model = {
+			id: "p/m",
+			display_name: "M",
+			input: undefined,
+			context_window: 8_000,
+			max_tokens: 2_000,
+			reasoning: false,
+		};
 		const fetch = vi
 			.fn()
-			.mockResolvedValueOnce({ ok: true, status: 200, json: vi.fn().mockResolvedValue(mockTokenBody()) })
+			.mockResolvedValueOnce({
+				ok: true,
+				status: 200,
+				json: vi.fn().mockResolvedValue(mockTokenBody()),
+			})
 			.mockResolvedValueOnce({
 				ok: true,
 				status: 200,
@@ -318,11 +362,26 @@ describe("completeZosmaAuth", () => {
 	});
 
 	it("success writes managed provider, reloads, verifies, and returns result", async () => {
-		(state.loadPending as Mock).mockReturnValue({ state: "mocked-state", codeVerifier: "verifier", deviceId: "dev" });
-		const model = { id: "p/m1", display_name: "M1", input: ["text"], context_window: 8_000, max_tokens: 2_000, reasoning: false };
+		(state.loadPending as Mock).mockReturnValue({
+			state: "mocked-state",
+			codeVerifier: "verifier",
+			deviceId: "dev",
+		});
+		const model = {
+			id: "p/m1",
+			display_name: "M1",
+			input: ["text"],
+			context_window: 8_000,
+			max_tokens: 2_000,
+			reasoning: false,
+		};
 		const fetch = vi
 			.fn()
-			.mockResolvedValueOnce({ ok: true, status: 200, json: vi.fn().mockResolvedValue(mockTokenBody()) })
+			.mockResolvedValueOnce({
+				ok: true,
+				status: 200,
+				json: vi.fn().mockResolvedValue(mockTokenBody()),
+			})
 			.mockResolvedValueOnce({
 				ok: true,
 				status: 200,
@@ -344,11 +403,26 @@ describe("completeZosmaAuth", () => {
 	});
 
 	it("reload failure restores prior snapshot and preserves unrelated providers", async () => {
-		(state.loadPending as Mock).mockReturnValue({ state: "mocked-state", codeVerifier: "verifier", deviceId: "dev" });
-		const model = { id: "p/m1", display_name: "M1", input: ["text"], context_window: 8_000, max_tokens: 2_000, reasoning: false };
+		(state.loadPending as Mock).mockReturnValue({
+			state: "mocked-state",
+			codeVerifier: "verifier",
+			deviceId: "dev",
+		});
+		const model = {
+			id: "p/m1",
+			display_name: "M1",
+			input: ["text"],
+			context_window: 8_000,
+			max_tokens: 2_000,
+			reasoning: false,
+		};
 		const fetch = vi
 			.fn()
-			.mockResolvedValueOnce({ ok: true, status: 200, json: vi.fn().mockResolvedValue(mockTokenBody()) })
+			.mockResolvedValueOnce({
+				ok: true,
+				status: 200,
+				json: vi.fn().mockResolvedValue(mockTokenBody()),
+			})
 			.mockResolvedValueOnce({
 				ok: true,
 				status: 200,
@@ -361,7 +435,9 @@ describe("completeZosmaAuth", () => {
 		(customProviders.snapshotProvider as Mock).mockReturnValue(priorSnapshot);
 		const deps = makeDeps({ initAgent: vi.fn().mockRejectedValue(new Error("reload failed")) });
 
-		await expect(completeZosmaAuth("code", "mocked-state", PI_DIR, deps)).rejects.toThrow("reload failed");
+		await expect(completeZosmaAuth("code", "mocked-state", PI_DIR, deps)).rejects.toThrow(
+			"reload failed",
+		);
 
 		// Should have restored the snapshot
 		expect(customProviders.restoreProvider).toHaveBeenCalledWith(
@@ -375,11 +451,26 @@ describe("completeZosmaAuth", () => {
 
 	it("existing custom providers survive failed setup (regression)", async () => {
 		// Simulate models.json with an unrelated manual provider before setup
-		(state.loadPending as Mock).mockReturnValue({ state: "mocked-state", codeVerifier: "verifier", deviceId: "dev" });
-		const model = { id: "p/m", display_name: "M", input: ["text"], context_window: 8_000, max_tokens: 2_000, reasoning: false };
+		(state.loadPending as Mock).mockReturnValue({
+			state: "mocked-state",
+			codeVerifier: "verifier",
+			deviceId: "dev",
+		});
+		const model = {
+			id: "p/m",
+			display_name: "M",
+			input: ["text"],
+			context_window: 8_000,
+			max_tokens: 2_000,
+			reasoning: false,
+		};
 		const fetch = vi
 			.fn()
-			.mockResolvedValueOnce({ ok: true, status: 200, json: vi.fn().mockResolvedValue(mockTokenBody()) })
+			.mockResolvedValueOnce({
+				ok: true,
+				status: 200,
+				json: vi.fn().mockResolvedValue(mockTokenBody()),
+			})
 			.mockResolvedValueOnce({
 				ok: true,
 				status: 200,
@@ -395,7 +486,9 @@ describe("completeZosmaAuth", () => {
 			{ id: "p/m", provider: "zosmaai-router" },
 		]);
 
-		await expect(completeZosmaAuth("code", "mocked-state", PI_DIR, deps)).rejects.toThrow("reload failed");
+		await expect(completeZosmaAuth("code", "mocked-state", PI_DIR, deps)).rejects.toThrow(
+			"reload failed",
+		);
 
 		// restoreProvider called with null — zosmaai-router never existed, so no prior
 		expect(customProviders.restoreProvider).toHaveBeenCalledWith(
@@ -406,11 +499,26 @@ describe("completeZosmaAuth", () => {
 	});
 
 	it("token exchange uses redirect: error and timeout", async () => {
-		(state.loadPending as Mock).mockReturnValue({ state: "mocked-state", codeVerifier: "verifier", deviceId: "dev" });
-		const model = { id: "p/m", display_name: "M", input: ["text"], context_window: 8_000, max_tokens: 2_000, reasoning: false };
+		(state.loadPending as Mock).mockReturnValue({
+			state: "mocked-state",
+			codeVerifier: "verifier",
+			deviceId: "dev",
+		});
+		const model = {
+			id: "p/m",
+			display_name: "M",
+			input: ["text"],
+			context_window: 8_000,
+			max_tokens: 2_000,
+			reasoning: false,
+		};
 		const fetch = vi
 			.fn()
-			.mockResolvedValueOnce({ ok: true, status: 200, json: vi.fn().mockResolvedValue(mockTokenBody()) })
+			.mockResolvedValueOnce({
+				ok: true,
+				status: 200,
+				json: vi.fn().mockResolvedValue(mockTokenBody()),
+			})
 			.mockResolvedValueOnce({
 				ok: true,
 				status: 200,
@@ -467,7 +575,10 @@ describe("disconnectZosmaAuth", () => {
 		const deps = makeDeps();
 		await disconnectZosmaAuth(PI_DIR, deps);
 
-		expect(customProviders.deleteProviderEntry).toHaveBeenCalledWith(expect.any(String), "zosmaai-router");
+		expect(customProviders.deleteProviderEntry).toHaveBeenCalledWith(
+			expect.any(String),
+			"zosmaai-router",
+		);
 		expect(deps.initAgent).toHaveBeenCalled();
 	});
 
@@ -486,7 +597,9 @@ describe("disconnectZosmaAuth", () => {
 describe("refreshZosmaModels", () => {
 	it("throws when no provider configured", async () => {
 		(customProviders.readProviderEntry as Mock).mockReturnValue(null);
-		await expect(refreshZosmaModels(PI_DIR, makeDeps())).rejects.toThrow("no zosmaai-router provider");
+		await expect(refreshZosmaModels(PI_DIR, makeDeps())).rejects.toThrow(
+			"no zosmaai-router provider",
+		);
 	});
 
 	it("fetches catalog with Bearer, redirect:error, and timeout", async () => {
@@ -494,7 +607,14 @@ describe("refreshZosmaModels", () => {
 			apiKey: "original-key",
 			models: [],
 		});
-		const model = { id: "p/new-model", display_name: "New", input: ["text"], context_window: 16_000, max_tokens: 4_000, reasoning: false };
+		const model = {
+			id: "p/new-model",
+			display_name: "New",
+			input: ["text"],
+			context_window: 16_000,
+			max_tokens: 4_000,
+			reasoning: false,
+		};
 		const fetch = mockFetchResponse(200, mockCatalogBody([model]));
 		setZosmaAuthConfig({ fetch });
 
@@ -514,6 +634,26 @@ describe("refreshZosmaModels", () => {
 		expect(saved.models).toHaveLength(1);
 		expect(saved.models[0].id).toBe("p/new-model");
 	});
+
+	it("uses configured auth URL and preserves provider base URL", async () => {
+		(customProviders.readProviderEntry as Mock).mockReturnValue({
+			apiKey: "configured-key",
+			baseUrl: LOCAL_ROUTER,
+			models: [],
+		});
+		const model = { id: "p/prod-model", display_name: "Prod", input: ["text"] };
+		const fetch = mockFetchResponse(200, mockCatalogBody([model]));
+		setZosmaAuthConfig({ authBaseUrl: LOCAL_AUTH, fetch });
+
+		await refreshZosmaModels(
+			PI_DIR,
+			makeDeps({}, [{ id: "p/prod-model", provider: "zosmaai-router" }]),
+		);
+
+		expect((fetch as Mock).mock.calls[0][0]).toBe(`${LOCAL_AUTH}/v1/models`);
+		const saved = (customProviders.saveCustomProvider as Mock).mock.calls[0][1];
+		expect(saved.baseUrl).toBe(LOCAL_ROUTER);
+	});
 });
 
 describe("getZosmaUsage", () => {
@@ -524,7 +664,12 @@ describe("getZosmaUsage", () => {
 
 	it("returns safe usage DTO with Bearer auth, redirect:error, timeout", async () => {
 		(customProviders.readProviderEntry as Mock).mockReturnValue({ apiKey: "k" });
-		const fetch = mockFetchResponse(200, { plan: "pro", used: 42, limit: 1000, reset_at: "2026-08-01T00:00:00Z" });
+		const fetch = mockFetchResponse(200, {
+			plan: "pro",
+			used: 42,
+			limit: 1000,
+			reset_at: "2026-08-01T00:00:00Z",
+		});
 		setZosmaAuthConfig({ fetch });
 
 		const result = await getZosmaUsage(PI_DIR);
@@ -541,6 +686,19 @@ describe("getZosmaUsage", () => {
 			limit: 1000,
 			resetAt: "2026-08-01T00:00:00Z",
 		});
+	});
+
+	it("uses configured auth URL for usage requests", async () => {
+		(customProviders.readProviderEntry as Mock).mockReturnValue({
+			apiKey: "configured-key",
+			baseUrl: LOCAL_ROUTER,
+		});
+		const fetch = mockFetchResponse(200, { plan: "pro", used: 1, limit: 100 });
+		setZosmaAuthConfig({ authBaseUrl: LOCAL_AUTH, fetch });
+
+		await getZosmaUsage(PI_DIR);
+
+		expect((fetch as Mock).mock.calls[0][0]).toBe(`${LOCAL_AUTH}/v1/me/usage`);
 	});
 
 	it("rejects malformed non-object response", async () => {

@@ -4,14 +4,14 @@ name: Staging Build
 # Staging builds for internal testing.
 #
 # WHAT this does:
-#   - When a PR is labeled `staging` (or manually via `workflow_dispatch`),
-#     bundle the desktop app for macOS-universal, Linux-x64, Windows-x64.
+#   - When a same-repository PR is labeled `staging` (or manually via
+#     `workflow_dispatch`), bundle the desktop app for macOS-universal,
+#     Linux-x64, Windows-x64.
 #   - Upload the installers as workflow artifacts (14 day retention).
 #   - Hand off to `staging-notify.yml` (a `workflow_run` workflow) which
 #     posts a Discord message with auth-free nightly.link download links
-#     and drops a sticky comment on the PR. That half runs in the trusted
-#     base-repo context, so it works for FORK PRs too, without ever
-#     exposing the webhook secret to fork code.
+#     and drops a sticky comment on the PR. Fork PRs are not built here because
+#     endpoint configuration must come from trusted repository Variables.
 #
 # WHY label-triggered, not push-to-main triggered:
 #   - Reviewers want to bash on the artifact BEFORE merging, not after. A
@@ -19,7 +19,7 @@ name: Staging Build
 #   - We don't want to burn 3 × 90-min runner-minutes on every push to every
 #     PR. The author / reviewer adds the `staging` label when the PR is at
 #     a "please test" state. Subsequent pushes to that labeled PR rebuild.
-#   - `workflow_dispatch` is the manual escape hatch for arbitrary refs
+#   - `workflow_dispatch` is the manual escape hatch for trusted refs
 #     (e.g. building from `main` post-merge, or from a release branch).
 #
 # WHAT this DOES NOT do:
@@ -32,16 +32,10 @@ name: Staging Build
 #     on every label add isn't worth it. Internal testers dismiss the OS
 #     warnings (the Discord embed and PR comment include the macOS `xattr`
 #     step and the Windows "Run anyway" step).
-#   - Does NOT post to Discord / comment on the PR itself, and does NOT
-#     read any repo secret. Fork PRs run WITHOUT secrets and with a
-#     read-only token, so notification is split into a separate
-#     `workflow_run`-triggered workflow (`staging-notify.yml`) that runs in
-#     the base-repo context with secret + write access AFTER this build
-#     completes. This job only ever compiles untrusted PR code and uploads
-#     artifacts + a metadata file — it never sees `DISCORD_STAGING_WEBHOOK`,
-#     so a malicious fork cannot exfiltrate it. This is deliberately
-#     preferred over `pull_request_target`, which WOULD run fork build code
-#     with secrets in scope. See staging-notify.yml for the notify half.
+#   - Does NOT post to Discord / comment on the PR itself. Notification is
+#     split into a separate `workflow_run` workflow (`staging-notify.yml`).
+#     This workflow only builds same-repository code or a manually selected
+#     trusted ref, with endpoint configuration supplied by repository Variables.
 #
 # Tracks zosmaai/zosma-cowork#133.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -82,12 +76,13 @@ jobs:
     #   (b) the PR carries the `staging` label.
     # For `labeled` events specifically, `github.event.label.name` lets us
     # avoid kicking a fresh build on every UNRELATED label add (e.g. someone
-    # adding `tech-debt`). For `synchronize` / `reopened` the label set on
-    # the PR object is the source of truth.
+    # adding `tech-debt`). Fork PRs are excluded because their workflows do
+    # not receive repository Variables. For `synchronize` / `reopened` the
+    # PR label set remains the source of truth.
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'staging') ||
-      (github.event_name == 'pull_request' && github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'staging'))
+      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.action == 'labeled' && github.event.label.name == 'staging') ||
+      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'staging'))
     strategy:
       fail-fast: false
       matrix:
@@ -214,6 +209,13 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Staging values come from repository Variables and are baked into
+          # the package because installed apps do not inherit CI env.
+          ZOSMA_STAGING: "1"
+          ZOSMA_GOOGLE_CLIENT_ID: ${{ vars.ZOSMA_STAGING_GOOGLE_CLIENT_ID }}
+          ZOSMA_OAUTH_BROKER_URL: ${{ vars.ZOSMA_STAGING_OAUTH_BROKER_URL }}
+          ZOSMA_AUTH_BASE_URL: ${{ vars.ZOSMA_STAGING_AUTH_BASE_URL }}
+          ZOSMA_ROUTER_BASE_URL: ${{ vars.ZOSMA_STAGING_ROUTER_BASE_URL }}
           # TAURI_SIGNING_PRIVATE_KEY[_PASSWORD] are exported by the
           # "Provision updater signing key" step above (repo key on base-repo
           # runs, ephemeral key on fork PRs), so they are intentionally not
@@ -225,6 +227,15 @@ jobs:
           # workflow.
           args: ${{ matrix.args }}
           includeUpdaterJson: false
+
+      - name: Verify staging endpoints in bundled sidecar
+        shell: bash
+        env:
+          ZOSMA_GOOGLE_CLIENT_ID: ${{ vars.ZOSMA_STAGING_GOOGLE_CLIENT_ID }}
+          ZOSMA_OAUTH_BROKER_URL: ${{ vars.ZOSMA_STAGING_OAUTH_BROKER_URL }}
+          ZOSMA_AUTH_BASE_URL: ${{ vars.ZOSMA_STAGING_AUTH_BASE_URL }}
+          ZOSMA_ROUTER_BASE_URL: ${{ vars.ZOSMA_STAGING_ROUTER_BASE_URL }}
+        run: node scripts/verify-staging-bundle.mjs
 
       - name: Collect bundles
         shell: bash
@@ -298,8 +309,8 @@ jobs:
     name: Save PR metadata for notify
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'staging') ||
-      (github.event_name == 'pull_request' && github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'staging'))
+      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.action == 'labeled' && github.event.label.name == 'staging') ||
+      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'staging'))
     runs-on: ubuntu-latest
     steps:
       - name: Write metadata

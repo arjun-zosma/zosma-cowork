@@ -83,7 +83,7 @@ export function parseDeepLink(url: string): ParsedDeepLink | null {
 
 // ── Safe error helper ──────────────────────────────────────────────────────
 
-function safeError(err: unknown): string {
+export function safeError(err: unknown): string {
 	const msg = err instanceof Error ? err.message : String(err);
 	// Map common error messages to user-safe text
 	if (msg.includes("no pending") || msg.includes("expired")) {

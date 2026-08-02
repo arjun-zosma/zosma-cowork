@@ -9,6 +9,31 @@ on:
     - cron: "0 6 * * 1" # Weekly on Monday
 
 jobs:
+  secret-boundary:
+    name: Secret boundary check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Reject tracked credential files and common key patterns
+        shell: bash
+        run: |
+          set -euo pipefail
+          tracked=$(git ls-files | grep -Ei '(^|/)(\.env$|client[_-]?secret|credentials?|.*secret.*\.json)' || true)
+          if [ -n "$tracked" ]; then
+            echo "Tracked credential-like files found:"
+            echo "$tracked"
+            exit 1
+          fi
+          matches=$(git grep -nI -E 'GOCSPX-[A-Za-z0-9_-]{20,}|AIza[A-Za-z0-9_-]{20,}' -- ':!*.md' ':!*.example' ':!*.test.*' || true)
+          if [ -n "$matches" ]; then
+            echo "Credential-shaped values found in tracked source:"
+            echo "$matches"
+            exit 1
+          fi
+
   dependency-audit:
     name: Dependency Audit
     runs-on: ubuntu-latest

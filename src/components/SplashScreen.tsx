@@ -1,12 +1,10 @@
-/**
- * SplashScreen — Startup loading state
- *
- * Shown while the agent sidecar is still booting and we can't yet tell
- * whether the user is authenticated. This replaces the brief, confusing
- * flash of the onboarding/Welcome screen during startup (issue #169):
- * returning users no longer see a "Connect your AI" screen they don't need.
- */
+import { Lock, Zap } from "lucide-react";
 
+/**
+ * Startup transition shown while returning users wait for Pi to become ready.
+ * Fresh users bypass this once state classification is available and enter the
+ * connect screen directly.
+ */
 interface SplashScreenProps {
 	/** Optional status line (defaults to a generic "starting" message). */
 	message?: string;
@@ -14,20 +12,36 @@ interface SplashScreenProps {
 
 export function SplashScreen({ message = "Starting up…" }: SplashScreenProps) {
 	return (
-		<div className="flex-1 flex flex-col items-center justify-center h-full gap-6 animate-fade-in">
-			{/* Logo mark — matches the onboarding splash */}
-			<img
-				src="/zosma-mark.png"
-				alt="Zosma Cowork"
-				className="w-16 h-16 rounded-2xl shadow-lg animate-subtle-pulse"
-				draggable={false}
-			/>
+		<div className="flex h-full flex-1 items-center justify-center overflow-y-auto px-6 py-12 animate-fade-in">
+			<div className="flex w-full max-w-sm flex-col items-center text-center">
+				<img
+					src="/zosma-mark.png"
+					alt="Zosma Cowork"
+					className="mb-5 h-16 w-16 rounded-2xl shadow-lg animate-subtle-pulse"
+					draggable={false}
+				/>
+				<h1 className="text-xl font-bold text-foreground">Zosma Cowork</h1>
+				<p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+					Connect your AI accounts and start working — your credentials stay on your machine.
+				</p>
 
-			<div className="flex flex-col items-center gap-3">
-				<h1 className="text-lg font-semibold text-foreground">Zosma Cowork</h1>
-				<div className="flex items-center gap-2.5">
-					<span className="w-4 h-4 rounded-full border-2 border-primary/30 border-t-primary animate-spin" />
-					<span className="text-sm text-muted-foreground">{message}</span>
+				<div className="mt-7 w-full space-y-2 text-left">
+					<div className="flex items-center gap-3 rounded-xl bg-muted/40 px-3.5 py-2.5 text-xs text-muted-foreground">
+						<Zap className="h-4 w-4 shrink-0 text-primary" />
+						Works with Claude, ChatGPT, Copilot, and local models
+					</div>
+					<div className="flex items-center gap-3 rounded-xl bg-muted/40 px-3.5 py-2.5 text-xs text-muted-foreground">
+						<Lock className="h-4 w-4 shrink-0 text-primary" />
+						Your API keys and data never leave this device
+					</div>
+				</div>
+
+				<div
+					className="mt-8 flex items-center gap-2 text-xs text-muted-foreground"
+					aria-live="polite"
+				>
+					<span className="h-3.5 w-3.5 rounded-full border-2 border-primary/30 border-t-primary animate-spin" />
+					{message}
 				</div>
 			</div>
 		</div>

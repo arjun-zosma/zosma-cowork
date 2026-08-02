@@ -9,15 +9,25 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { dirname, join } from "node:path";
-import { deleteProviderEntry, readProviderEntry, restoreProvider, saveCustomProvider, snapshotProvider } from "../custom-providers.js";
+import {
+	deleteProviderEntry,
+	readProviderEntry,
+	restoreProvider,
+	saveCustomProvider,
+	snapshotProvider,
+} from "../custom-providers.js";
 import { logWarn } from "../protocol.js";
 import { generateCodeVerifier, generateState, sha256Base64url } from "./crypto.js";
 import { deletePending, loadPending, savePending } from "./state.js";
 
-// ponytail: mutable defaults for test injection. Set via setZosmaAuthConfig.
-// Production uses these hardcoded values. Override via env vars or setZosmaAuthConfig.
-let authBaseUrl = process.env.ZOSMA_AUTH_BASE_URL || "https://auth.zosma.ai";
-let routerBaseUrl = process.env.ZOSMA_ROUTER_BASE_URL || "https://router.zosma.ai/v1";
+// Config comes only from process env, build-time replacement, or explicit
+// runtime configuration. Unreplaced slots stay empty so missing configuration
+// fails closed instead of selecting an environment.
+const BAKED_AUTH_BASE_URL = "__ZOSMA_AUTH_BASE_URL__";
+const BAKED_ROUTER_BASE_URL = "__ZOSMA_ROUTER_BASE_URL__";
+const unbaked = (value: string): string => (value.startsWith("__ZOSMA_") ? "" : value.trim());
+let authBaseUrl = process.env.ZOSMA_AUTH_BASE_URL?.trim() || unbaked(BAKED_AUTH_BASE_URL);
+let routerBaseUrl = process.env.ZOSMA_ROUTER_BASE_URL?.trim() || unbaked(BAKED_ROUTER_BASE_URL);
 let fetchImpl: typeof globalThis.fetch = globalThis.fetch;
 const DEVICE_ID_FILE = "zosma-device-id.txt";
 const ROUTER_CONFIG_FILE = "zosma-router-config.json";
@@ -38,9 +48,11 @@ function loadRouterConfig(piDir: string): void {
 		if (existsSync(file)) {
 			const raw = readFileSync(file, "utf-8");
 			const config = JSON.parse(raw) as { authBaseUrl?: string; routerBaseUrl?: string };
-			// Env vars take precedence over file config
-			if (!process.env.ZOSMA_AUTH_BASE_URL && config.authBaseUrl) authBaseUrl = config.authBaseUrl;
-			if (!process.env.ZOSMA_ROUTER_BASE_URL && config.routerBaseUrl) routerBaseUrl = config.routerBaseUrl;
+			// Env vars take precedence over file config.
+			if (!process.env.ZOSMA_AUTH_BASE_URL && config.authBaseUrl?.trim())
+				authBaseUrl = config.authBaseUrl.trim();
+			if (!process.env.ZOSMA_ROUTER_BASE_URL && config.routerBaseUrl?.trim())
+				routerBaseUrl = config.routerBaseUrl.trim();
 		}
 	} catch {
 		// ignore corrupt config
@@ -50,7 +62,10 @@ function loadRouterConfig(piDir: string): void {
 /**
  * Save router config to piDir so it persists across sidecar restarts.
  */
-export function saveRouterConfig(piDir: string, config: { authBaseUrl: string; routerBaseUrl: string }): void {
+export function saveRouterConfig(
+	piDir: string,
+	config: { authBaseUrl: string; routerBaseUrl: string },
+): void {
 	const file = join(piDir, ROUTER_CONFIG_FILE);
 	mkdirSync(piDir, { recursive: true });
 	writeFileSync(file, JSON.stringify(config, null, 2), "utf-8");
@@ -71,6 +86,29 @@ export function setZosmaAuthConfig(config: {
 	if (config.authBaseUrl !== undefined) authBaseUrl = config.authBaseUrl;
 	if (config.routerBaseUrl !== undefined) routerBaseUrl = config.routerBaseUrl;
 	if (config.fetch !== undefined) fetchImpl = config.fetch;
+}
+
+function requireConfigured(value: string, name: string): string {
+	const configured = value.trim().replace(/\/+$/, "");
+	if (!configured) throw new Error(`${name} is not configured`);
+	return configured;
+}
+
+function normalizedUrl(value: string): string {
+	return value.trim().replace(/\/+$/, "");
+}
+
+/**
+ * Use explicitly configured auth URL for managed providers.
+ * Reject mismatched router configuration instead of guessing an environment.
+ */
+function authBaseForProvider(provider: Record<string, unknown>): string {
+	const providerBaseUrl = typeof provider.baseUrl === "string" ? normalizedUrl(provider.baseUrl) : "";
+	const configuredRouterUrl = normalizedUrl(routerBaseUrl);
+	if (providerBaseUrl && configuredRouterUrl && providerBaseUrl !== configuredRouterUrl) {
+		throw new Error("configured router URL does not match managed provider");
+	}
+	return requireConfigured(authBaseUrl, "ZOSMA_AUTH_BASE_URL");
 }
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -132,12 +170,15 @@ function loadDeviceId(piDir: string): string {
  */
 function mapInputCapability(row: Record<string, unknown>): ModelInput[] | undefined {
 	if (Array.isArray(row.input)) {
-		const filtered = row.input.filter((v: unknown): v is ModelInput => v === "text" || v === "image");
+		const filtered = row.input.filter(
+			(v: unknown): v is ModelInput => v === "text" || v === "image",
+		);
 		if (filtered.length > 0) return filtered;
 	}
 	if (Array.isArray(row.input_modalities)) {
 		const hasImage = row.input_modalities.some(
-			(m: unknown) => typeof m === "string" && (m === "image" || m === "vision" || m === "image_url"),
+			(m: unknown) =>
+				typeof m === "string" && (m === "image" || m === "vision" || m === "image_url"),
 		);
 		return hasImage ? ["text", "image"] : ["text"];
 	}
@@ -152,10 +193,12 @@ function mapInputCapability(row: Record<string, unknown>): ModelInput[] | undefi
  * 1. Generate state + PKCE code_verifier + S256 challenge
  * 2. Load/generate device ID
  * 3. Save pending transaction BEFORE network call
- * 4. POST to auth.zosma.ai to create server-side transaction
+ * 4. POST to configured auth service to create server-side transaction
  * 5. Return authorizationUrl for system browser
  */
 export async function startZosmaAuth(piDir: string): Promise<StartAuthResult> {
+	loadRouterConfig(piDir);
+	const configuredAuthBaseUrl = requireConfigured(authBaseUrl, "ZOSMA_AUTH_BASE_URL");
 	const state = generateState();
 	const codeVerifier = generateCodeVerifier();
 	const codeChallenge = sha256Base64url(codeVerifier);
@@ -165,7 +208,7 @@ export async function startZosmaAuth(piDir: string): Promise<StartAuthResult> {
 	// still has recoverable state.
 	savePending({ state, codeVerifier, deviceId, expiresAt: Date.now() + 10 * 60 * 1000 }, piDir);
 
-	const res = await fetchImpl(`${authBaseUrl}/v1/cowork/authorizations`, {
+	const res = await fetchImpl(`${configuredAuthBaseUrl}/v1/cowork/authorizations`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({
@@ -214,6 +257,10 @@ export async function completeZosmaAuth(
 	piDir: string,
 	deps: HandlerDependencies,
 ): Promise<CompleteAuthResult> {
+	loadRouterConfig(piDir);
+	const configuredAuthBaseUrl = requireConfigured(authBaseUrl, "ZOSMA_AUTH_BASE_URL");
+	requireConfigured(routerBaseUrl, "ZOSMA_ROUTER_BASE_URL");
+
 	// 1. Validate inputs
 	if (!code || !state) {
 		throw new Error("missing code or state");
@@ -230,7 +277,7 @@ export async function completeZosmaAuth(
 	}
 
 	// 3. Exchange code + PKCE verifier for router device key
-	const tokenRes = await fetchImpl(`${authBaseUrl}/v1/cowork/token`, {
+	const tokenRes = await fetchImpl(`${configuredAuthBaseUrl}/v1/cowork/token`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({
@@ -245,7 +292,10 @@ export async function completeZosmaAuth(
 
 	if (!tokenRes.ok) {
 		deletePending(piDir);
-		const msg = tokenRes.status === 401 ? "code expired or already used" : `token exchange returned ${tokenRes.status}`;
+		const msg =
+			tokenRes.status === 401
+				? "code expired or already used"
+				: `token exchange returned ${tokenRes.status}`;
 		throw new Error(msg);
 	}
 
@@ -257,7 +307,7 @@ export async function completeZosmaAuth(
 	}
 
 	// 4. Fetch authenticated entitlement catalog; inference stays on routerBaseUrl.
-	const modelsRes = await fetchImpl(`${authBaseUrl}/v1/models`, {
+	const modelsRes = await fetchImpl(`${configuredAuthBaseUrl}/v1/models`, {
 		headers: { Authorization: `Bearer ${routerKey}` },
 		redirect: "error",
 		signal: AbortSignal.timeout(TIMEOUT_MS),
@@ -280,8 +330,18 @@ export async function completeZosmaAuth(
 	const models: MappedModel[] = rows.map((r) => ({
 		id: String(r.id),
 		name: r.display_name ? String(r.display_name) : String(r.id),
-		contextWindow: typeof r.context_window === "number" ? r.context_window : typeof r.contextWindow === "number" ? r.contextWindow : undefined,
-		maxTokens: typeof r.max_tokens === "number" ? r.max_tokens : typeof r.maxTokens === "number" ? r.maxTokens : undefined,
+		contextWindow:
+			typeof r.context_window === "number"
+				? r.context_window
+				: typeof r.contextWindow === "number"
+					? r.contextWindow
+					: undefined,
+		maxTokens:
+			typeof r.max_tokens === "number"
+				? r.max_tokens
+				: typeof r.maxTokens === "number"
+					? r.maxTokens
+					: undefined,
 		reasoning: Boolean(r.reasoning),
 		input: mapInputCapability(r),
 	}));
@@ -345,18 +405,18 @@ export async function completeZosmaAuth(
  * 2. Delete local provider entry
  * 3. Reload Pi registry
  */
-export async function disconnectZosmaAuth(
-	piDir: string,
-	deps: HandlerDependencies,
-): Promise<void> {
+export async function disconnectZosmaAuth(piDir: string, deps: HandlerDependencies): Promise<void> {
+	loadRouterConfig(piDir);
 	const modelsPath = join(piDir, "models.json");
 	const provider = readProviderEntry(modelsPath, "zosmaai-router");
+	const providerAuthBaseUrl = provider ? authBaseForProvider(provider) : "";
 
 	// 1. Server-side revoke (best-effort) — uses Bearer header per frozen contract
 	if (provider?.apiKey) {
 		try {
-			const revokeKey = typeof provider.apiKey === "string" ? provider.apiKey : String(provider.apiKey);
-			const res = await fetchImpl(`${authBaseUrl}/v1/cowork/revoke`, {
+			const revokeKey =
+				typeof provider.apiKey === "string" ? provider.apiKey : String(provider.apiKey);
+			const res = await fetchImpl(`${providerAuthBaseUrl}/v1/cowork/revoke`, {
 				method: "POST",
 				headers: { Authorization: `Bearer ${revokeKey}` },
 				redirect: "error",
@@ -398,6 +458,7 @@ export async function refreshZosmaModels(
 	piDir: string,
 	deps: HandlerDependencies,
 ): Promise<{ modelCount: number; selectedModelId: string }> {
+	loadRouterConfig(piDir);
 	const modelsPath = join(piDir, "models.json");
 	const provider = readProviderEntry(modelsPath, "zosmaai-router");
 	if (!provider?.apiKey) {
@@ -405,7 +466,8 @@ export async function refreshZosmaModels(
 	}
 
 	// Fetch authenticated entitlement catalog; inference stays on routerBaseUrl.
-	const modelsRes = await fetchImpl(`${authBaseUrl}/v1/models`, {
+	const providerAuthBaseUrl = authBaseForProvider(provider);
+	const modelsRes = await fetchImpl(`${providerAuthBaseUrl}/v1/models`, {
 		headers: { Authorization: `Bearer ${provider.apiKey}` },
 		redirect: "error",
 		signal: AbortSignal.timeout(TIMEOUT_MS),
@@ -422,8 +484,18 @@ export async function refreshZosmaModels(
 	const models: MappedModel[] = rows.map((r) => ({
 		id: String(r.id),
 		name: r.display_name ? String(r.display_name) : String(r.id),
-		contextWindow: typeof r.context_window === "number" ? r.context_window : typeof r.contextWindow === "number" ? r.contextWindow : undefined,
-		maxTokens: typeof r.max_tokens === "number" ? r.max_tokens : typeof r.maxTokens === "number" ? r.maxTokens : undefined,
+		contextWindow:
+			typeof r.context_window === "number"
+				? r.context_window
+				: typeof r.contextWindow === "number"
+					? r.contextWindow
+					: undefined,
+		maxTokens:
+			typeof r.max_tokens === "number"
+				? r.max_tokens
+				: typeof r.maxTokens === "number"
+					? r.maxTokens
+					: undefined,
 		reasoning: Boolean(r.reasoning),
 		input: mapInputCapability(r),
 	}));
@@ -434,7 +506,10 @@ export async function refreshZosmaModels(
 		saveCustomProvider(modelsPath, {
 			id: "zosmaai-router",
 			name: "Zosma AI",
-			baseUrl: routerBaseUrl,
+			baseUrl:
+				typeof provider.baseUrl === "string"
+					? provider.baseUrl
+					: requireConfigured(routerBaseUrl, "ZOSMA_ROUTER_BASE_URL"),
 			apiKey: provider.apiKey as string,
 			models,
 		});
@@ -470,9 +545,24 @@ export async function refreshZosmaModels(
  * Fetches non-secret usage DTO from the auth service using the
  * scoped router device key. Returns only safe fields.
  */
-export async function getZosmaUsage(
-	piDir: string,
-): Promise<{ plan?: string; used?: number; limit?: number; resetAt?: string }> {
+export async function getZosmaUsage(piDir: string): Promise<{
+	plan?: string;
+	used?: number;
+	limit?: number;
+	resetAt?: string;
+	usageAvailable?: boolean;
+	providers?: Array<{
+		provider: string;
+		label: string;
+		cap: number;
+		used: number;
+		remaining: number;
+	}>;
+	resetsInHours?: number;
+	expiresAt?: string;
+	daysLeft?: number;
+	expired?: boolean;
+}> {
 	loadRouterConfig(piDir);
 	const modelsPath = join(piDir, "models.json");
 	const provider = readProviderEntry(modelsPath, "zosmaai-router");
@@ -480,7 +570,8 @@ export async function getZosmaUsage(
 		throw new Error("no zosmaai-router provider configured");
 	}
 
-	const res = await fetchImpl(`${authBaseUrl}/v1/me/usage`, {
+	const providerAuthBaseUrl = authBaseForProvider(provider);
+	const res = await fetchImpl(`${providerAuthBaseUrl}/v1/me/usage`, {
 		headers: { Authorization: `Bearer ${provider.apiKey}` },
 		redirect: "error",
 		signal: AbortSignal.timeout(TIMEOUT_MS),
@@ -489,11 +580,52 @@ export async function getZosmaUsage(
 		throw new Error(`usage endpoint returned ${res.status}`);
 	}
 
-	const body = (await res.json()) as { plan?: string; used?: number; limit?: number; reset_at?: string };
+	const body = (await res.json()) as {
+		plan?: string;
+		used?: number;
+		limit?: number;
+		reset_at?: string;
+		usageAvailable?: boolean;
+		providers?: Array<{
+			provider?: unknown;
+			label?: unknown;
+			cap?: unknown;
+			used?: unknown;
+			remaining?: unknown;
+		}>;
+		resetsInHours?: number;
+		expiresAt?: string;
+		daysLeft?: number;
+		expired?: boolean;
+	};
+	const providers = Array.isArray(body.providers)
+		? body.providers
+				.filter(
+					(p) =>
+						typeof p.provider === "string" &&
+						typeof p.label === "string" &&
+						typeof p.cap === "number" &&
+						typeof p.used === "number" &&
+						typeof p.remaining === "number",
+				)
+				.map((p) => ({
+					provider: p.provider as string,
+					label: p.label as string,
+					cap: p.cap as number,
+					used: p.used as number,
+					remaining: p.remaining as number,
+				}))
+		: undefined;
 	return {
 		plan: body.plan,
 		used: body.used,
 		limit: body.limit,
 		resetAt: body.reset_at,
+		...(body.usageAvailable === undefined ? {} : { usageAvailable: body.usageAvailable }),
+		...(providers === undefined ? {} : { providers }),
+		...(body.resetsInHours === undefined ? {} : { resetsInHours: body.resetsInHours }),
+		...(body.expiresAt === undefined ? {} : { expiresAt: body.expiresAt }),
+		...(body.daysLeft === undefined ? {} : { daysLeft: body.daysLeft }),
+		...(body.expired === undefined ? {} : { expired: body.expired }),
 	};
 }

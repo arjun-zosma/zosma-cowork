@@ -76,53 +76,22 @@ export const UNION_SCOPES: string[] = [...Object.values(GOOGLE_SCOPES), ...IDENT
 // config that still carries one (direct-refresh fallback); new connects leave
 // it empty and route everything through the broker.
 
-// Both of these are PUBLIC by design (the client_id is visible in every consent
-// URL; the broker URL is a public HTTPS endpoint). They are safe to commit and
-// to ship in the desktop bundle. The SECRET never lives here — it stays in the
-// broker (Secret Manager). Defaults point at STAGING; a prod release overrides
-// them via the build-time bake below (scripts/prebuild.mjs) or env.
-/** Default deployed staging broker. Override with ZOSMA_OAUTH_BROKER_URL. */
-export const DEFAULT_BROKER_URL = "https://broker-uoux53xara-uc.a.run.app";
-/** Default (staging) public Web client id. Override with ZOSMA_GOOGLE_CLIENT_ID. */
-export const DEFAULT_CLIENT_ID =
-	"830231223031-pukjd742a01uau7oekvrs231fb737eo0.apps.googleusercontent.com";
-
-// Build-time bake slots. scripts/prebuild.mjs replaces these literals with the
-// matching env var's value at `tauri build` time when set (so a packaged app
-// launched from its icon — which has no shell env — still gets the right values).
-// Left unreplaced (still starting with "__ZOSMA_") they are ignored.
+// Build-time bake slots. scripts/prebuild.mjs replaces these placeholders with
+// environment values for packaged builds. Unreplaced slots stay empty so a
+// missing configuration fails closed instead of selecting an environment.
 const BAKED_CLIENT_ID = "__ZOSMA_GOOGLE_CLIENT_ID__";
 const BAKED_BROKER_URL = "__ZOSMA_OAUTH_BROKER_URL__";
-// OPT-IN direct-secret slot ("Option A"). Unset by default → the brokered,
-// secretless flow stays the default and NOTHING is baked. When a build/dev env
-// supplies ZOSMA_GOOGLE_CLIENT_SECRET (or prebuild bakes this slot), the secret
-// is written into the package config files so the upstream pi-google-workspace
-// and @e9n/pi-gmail extensions — which self-refresh DIRECTLY with Google and
-// require a client_secret — work without a broker round-trip. Trade-off: a baked
-// secret is extractable from the bundle; only acceptable for a Desktop/Installed
-// OAuth client type (where Google does not treat the secret as confidential).
-const BAKED_CLIENT_SECRET = "__ZOSMA_GOOGLE_CLIENT_SECRET__";
 const unbaked = (v: string): string => (v.startsWith("__ZOSMA_") ? "" : v.trim());
 
-/** Resolved broker base URL (env → baked → staging default; slashes trimmed). */
+/** Resolved broker base URL (environment → build value; slashes trimmed). */
 export function brokerUrl(): string {
-	const raw =
-		process.env.ZOSMA_OAUTH_BROKER_URL?.trim() || unbaked(BAKED_BROKER_URL) || DEFAULT_BROKER_URL;
+	const raw = process.env.ZOSMA_OAUTH_BROKER_URL?.trim() || unbaked(BAKED_BROKER_URL);
 	return raw.replace(/\/+$/, "");
 }
 
-/** Resolved public client id (env → baked → staging default). */
+/** Resolved public client id (environment → build value). */
 export function resolveClientId(): string {
-	return process.env.ZOSMA_GOOGLE_CLIENT_ID?.trim() || unbaked(BAKED_CLIENT_ID) || DEFAULT_CLIENT_ID;
-}
-
-/**
- * Resolved Zosma client secret (env → baked → ""). Empty by default, which
- * keeps the brokered secretless flow. When non-empty, fan-out writes it so the
- * upstream Google extensions can self-refresh directly. See BAKED_CLIENT_SECRET.
- */
-export function resolveClientSecret(): string {
-	return process.env.ZOSMA_GOOGLE_CLIENT_SECRET?.trim() || unbaked(BAKED_CLIENT_SECRET) || "";
+	return process.env.ZOSMA_GOOGLE_CLIENT_ID?.trim() || unbaked(BAKED_CLIENT_ID);
 }
 
 export interface EmbeddedClient {
@@ -143,24 +112,17 @@ export interface ByoClientInput {
  * Resolve the OAuth client to use, in precedence order:
  *   1. bring-your-own client (id+secret) — the device holds the secret, so
  *      refresh/exchange go DIRECT to Google (brokerUrl cleared, no Zosma broker).
- *   2. env `ZOSMA_GOOGLE_CLIENT_ID`/`_SECRET` + the resolved broker URL.
- *   3. build-baked Zosma public client + broker (the default brokered flow).
+ *   2. build-baked Zosma public client + broker (the default brokered flow).
  */
 export function embeddedClient(byo?: ByoClientInput | null): EmbeddedClient {
 	if (byo?.clientId && byo?.clientSecret) {
 		return { clientId: byo.clientId, clientSecret: byo.clientSecret, brokerUrl: "" };
 	}
-	// Keep the broker URL for the INITIAL code exchange (the Zosma Web client's
-	// only registered redirect_uri is the broker /callback; the ephemeral
-	// loopback port is not registered, so direct code exchange would fail). When
-	// a direct secret is present (Option A), ALSO write it so the upstream
-	// pi-google-workspace + @e9n/pi-gmail extensions can self-refresh directly
-	// with Google (token refresh needs no redirect_uri). The owned calendar
-	// extension then also refreshes directly (clientSecret present → useBroker
-	// false), so all tools behave consistently.
+	// Keep the broker URL for the initial code exchange. The broker holds the
+	// Google client secret and handles later refreshes server-side.
 	return {
 		clientId: resolveClientId(),
-		clientSecret: resolveClientSecret(),
+		clientSecret: "",
 		brokerUrl: brokerUrl(),
 	};
 }
@@ -303,24 +265,24 @@ export function fanOutCredentials(paths: GooglePaths, input: FanOutInput): void 
 	if (!workspaceSelected(input.prefs)) {
 		removeIfExists(paths.workspaceOAuth);
 	} else {
-	const prevWs = readJson<WorkspaceConfig>(paths.workspaceOAuth);
-	const wsConfig: WorkspaceConfig = {
-		clientId: input.client.clientId,
-		// Broker connects ship NO secret to disk; refresh goes via brokerUrl.
-		clientSecret: input.client.clientSecret,
-		brokerUrl: input.client.brokerUrl,
-		redirectUri: input.redirectUri,
-		tokens: {
-			access_token: input.tokens.access_token,
-			// Google omits refresh_token when re-consenting without prompt=consent;
-			// keep the prior one so self-refresh keeps working.
-			refresh_token: input.tokens.refresh_token ?? prevWs?.tokens?.refresh_token,
-			token_type: input.tokens.token_type ?? "Bearer",
-			scope,
-			expiry_date: now + expiresInMs,
-		},
-	};
-	writeJson(paths.workspaceOAuth, wsConfig);
+		const prevWs = readJson<WorkspaceConfig>(paths.workspaceOAuth);
+		const wsConfig: WorkspaceConfig = {
+			clientId: input.client.clientId,
+			// Broker connects ship NO secret to disk; refresh goes via brokerUrl.
+			clientSecret: input.client.clientSecret,
+			brokerUrl: input.client.brokerUrl,
+			redirectUri: input.redirectUri,
+			tokens: {
+				access_token: input.tokens.access_token,
+				// Google omits refresh_token when re-consenting without prompt=consent;
+				// keep the prior one so self-refresh keeps working.
+				refresh_token: input.tokens.refresh_token ?? prevWs?.tokens?.refresh_token,
+				token_type: input.tokens.token_type ?? "Bearer",
+				scope,
+				expiry_date: now + expiresInMs,
+			},
+		};
+		writeJson(paths.workspaceOAuth, wsConfig);
 	}
 
 	// Destination 2 — pi-gmail (settings creds + token file). Written only when

@@ -67,6 +67,9 @@ const antigravitySecret =
 	(process.env.ANTIGRAVITY_CLIENT_SECRET || "").trim() ||
 	(existsSync(secretFile) ? readFileSync(secretFile, "utf-8").trim() : "");
 if (antigravitySecret) {
+	if (process.env.ZOSMA_RELEASE === "1") {
+		throw new Error("production release must not embed a Google client secret");
+	}
 	code = code.split("__ANTIGRAVITY_CLIENT_SECRET__").join(antigravitySecret);
 	writeFileSync(bundlePath, code, "utf-8");
 	console.log("[prebuild]   client secret injected");
@@ -74,15 +77,65 @@ if (antigravitySecret) {
 	console.warn("[prebuild]   no ANTIGRAVITY_CLIENT_SECRET — Gemini (Google) sign-in disabled");
 }
 
-// Inject the Zosma Google OAuth config. These are PUBLIC values (the Web
-// client_id and the broker's HTTPS URL) — NO secret is ever baked, because the
-// secret lives only in the backend broker. Source ships STAGING defaults, so a
-// build with neither env var set still works against staging; a prod release
-// sets ZOSMA_GOOGLE_CLIENT_ID / ZOSMA_OAUTH_BROKER_URL to override.
+// Inject the brokered Google Workspace/Gmail config. These are PUBLIC values
+// (the Web client_id and broker HTTPS URL) — NO secret is ever baked, because
+// the secret lives only in the backend broker. Staging and production workflows
+// pass explicit values so packaged apps never depend on shell env at runtime.
+// Zosma Router login uses its own server-side Google configuration.
 console.log("[prebuild] Injecting Zosma Google OAuth config (public)...");
+const buildMode = process.env.ZOSMA_RELEASE === "1"
+	? "production"
+	: process.env.ZOSMA_STAGING === "1"
+		? "staging"
+		: null;
+
+function requireHttpsBaseUrl(name, value, pathname, rejectStaging) {
+	if (!value) throw new Error(`${name} is required for ${buildMode} builds`);
+	let url;
+	try {
+		url = new URL(value);
+	} catch {
+		throw new Error(`${name} must be a valid URL`);
+	}
+	if (url.protocol !== "https:" || url.pathname !== pathname || url.search || url.hash) {
+		throw new Error(`${name} must be an HTTPS URL with path ${pathname}`);
+	}
+	if (rejectStaging && url.hostname.includes("staging")) {
+		throw new Error(`${name} must not point to staging in a production build`);
+	}
+}
+
+if (buildMode) {
+	const clientId = (process.env.ZOSMA_GOOGLE_CLIENT_ID || "").trim();
+	if (!/^\d+-[a-z0-9-]+\.apps\.googleusercontent\.com$/.test(clientId)) {
+		throw new Error("ZOSMA_GOOGLE_CLIENT_ID must be a valid Google OAuth client id");
+	}
+	const rejectStaging = buildMode === "production";
+	requireHttpsBaseUrl(
+		"ZOSMA_OAUTH_BROKER_URL",
+		(process.env.ZOSMA_OAUTH_BROKER_URL || "").trim(),
+		"/",
+		rejectStaging,
+	);
+	requireHttpsBaseUrl(
+		"ZOSMA_AUTH_BASE_URL",
+		(process.env.ZOSMA_AUTH_BASE_URL || "").trim(),
+		"/",
+		rejectStaging,
+	);
+	requireHttpsBaseUrl(
+		"ZOSMA_ROUTER_BASE_URL",
+		(process.env.ZOSMA_ROUTER_BASE_URL || "").trim(),
+		"/v1",
+		rejectStaging,
+	);
+	console.log(`[prebuild] ${buildMode} endpoint configuration validated from environment`);
+}
 for (const [token, envName] of [
 	["__ZOSMA_GOOGLE_CLIENT_ID__", "ZOSMA_GOOGLE_CLIENT_ID"],
 	["__ZOSMA_OAUTH_BROKER_URL__", "ZOSMA_OAUTH_BROKER_URL"],
+	["__ZOSMA_AUTH_BASE_URL__", "ZOSMA_AUTH_BASE_URL"],
+	["__ZOSMA_ROUTER_BASE_URL__", "ZOSMA_ROUTER_BASE_URL"],
 ]) {
 	const val = (process.env[envName] || "").trim();
 	if (val) {
@@ -93,18 +146,8 @@ for (const [token, envName] of [
 	}
 }
 
-// OPT-IN: bake the Zosma Google client SECRET ("Option A"). Off by default —
-// when ZOSMA_GOOGLE_CLIENT_SECRET is unset, the placeholder stays unreplaced and
-// the brokered secretless flow remains in effect. When set, the secret is baked
-// so the upstream pi-google-workspace + @e9n/pi-gmail extensions can self-refresh
-// directly with Google. Only do this for a Desktop/Installed OAuth client type.
-const zosmaGoogleSecret = (process.env.ZOSMA_GOOGLE_CLIENT_SECRET || "").trim();
-if (zosmaGoogleSecret) {
-	code = code.split("__ZOSMA_GOOGLE_CLIENT_SECRET__").join(zosmaGoogleSecret);
-	console.log("[prebuild]   baked ZOSMA_GOOGLE_CLIENT_SECRET (direct-refresh enabled)");
-} else {
-	console.log("[prebuild]   ZOSMA_GOOGLE_CLIENT_SECRET unset — brokered secretless flow (default)");
-}
+// No Zosma Google client secret is accepted here. Desktop bundles are
+// extractable; the Web client secret stays in the OAuth broker's Secret Manager.
 writeFileSync(bundlePath, code, "utf-8");
 
 // Copy bundled file into src-tauri/ for Tauri resource bundling

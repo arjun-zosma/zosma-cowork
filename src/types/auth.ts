@@ -5,6 +5,26 @@
  * on the sidecar only needs one frontend update.
  */
 
+/**
+ * Non-secret startup classification used for onboarding routing.
+ * Owned by the sidecar; returned via `get_onboarding_status`.
+ */
+export interface OnboardingStatus {
+	/**
+	 * True when persisted user configuration exists:
+	 * - at least one authenticated provider in auth.json;
+	 * - or a persisted managed Zosma provider;
+	 * - or a persisted custom/local provider or meaningful saved model config.
+	 * Runtime model catalog entries alone do NOT count.
+	 */
+	hasExistingSetup: boolean;
+
+	/**
+	 * True only when managed provider `zosmaai-router` is configured and usable.
+	 */
+	zosmaConnected: boolean;
+}
+
 export type AuthStatusEntry = {
 	id: string;
 	type: "api_key" | "oauth" | "unknown";

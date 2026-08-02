@@ -12,16 +12,16 @@ import {
 	migrateLegacyTokens,
 	UNION_SCOPES,
 } from "./broker.js";
-import {
-	defaultCoworkGooglePaths,
-	writeByoClient,
-	writeScopePrefs,
-} from "./prefs-store.js";
+import { defaultCoworkGooglePaths, writeByoClient, writeScopePrefs } from "./prefs-store.js";
 import { DEFAULT_PREFS } from "./scopes.js";
 
 let agentDir: string;
 let paths: GooglePaths;
 const NOW = 1_700_000_000_000;
+const TEST_CLIENT_ID = "test-google-client-id";
+const TEST_BROKER_URL = "https://broker.example.test";
+let previousClientId: string | undefined;
+let previousBrokerUrl: string | undefined;
 
 function writeJson(path: string, value: unknown) {
 	mkdirSync(dirname(path), { recursive: true });
@@ -33,12 +33,20 @@ function readJson(path: string): any {
 }
 
 beforeEach(() => {
+	previousClientId = process.env.ZOSMA_GOOGLE_CLIENT_ID;
+	previousBrokerUrl = process.env.ZOSMA_OAUTH_BROKER_URL;
+	process.env.ZOSMA_GOOGLE_CLIENT_ID = TEST_CLIENT_ID;
+	process.env.ZOSMA_OAUTH_BROKER_URL = TEST_BROKER_URL;
 	agentDir = mkdtempSync(join(tmpdir(), "google-broker-"));
 	paths = defaultGooglePaths(agentDir);
 });
 
 afterEach(() => {
 	rmSync(agentDir, { recursive: true, force: true });
+	if (previousClientId === undefined) delete process.env.ZOSMA_GOOGLE_CLIENT_ID;
+	else process.env.ZOSMA_GOOGLE_CLIENT_ID = previousClientId;
+	if (previousBrokerUrl === undefined) delete process.env.ZOSMA_OAUTH_BROKER_URL;
+	else process.env.ZOSMA_OAUTH_BROKER_URL = previousBrokerUrl;
 });
 
 const client = { clientId: "zosma-id", clientSecret: "zosma-secret", brokerUrl: "" };
@@ -136,7 +144,13 @@ describe("fanOutCredentials", () => {
 
 	it("removes stale gmail destinations when re-consenting with Gmail now Off", () => {
 		// First connect with everything (default) → gmail files written.
-		fanOutCredentials(paths, { client, tokens, email: "u@example.com", redirectUri: "r", now: NOW });
+		fanOutCredentials(paths, {
+			client,
+			tokens,
+			email: "u@example.com",
+			redirectUri: "r",
+			now: NOW,
+		});
 		expect(existsSync(paths.gmailTokens)).toBe(true);
 		// Re-consent dropping Gmail.
 		fanOutCredentials(paths, {
@@ -178,7 +192,13 @@ describe("fanOutCredentials", () => {
 	});
 
 	it("preserves a prior refresh_token when Google omits one on re-consent", () => {
-		fanOutCredentials(paths, { client, tokens, email: "u@example.com", redirectUri: "r", now: NOW });
+		fanOutCredentials(paths, {
+			client,
+			tokens,
+			email: "u@example.com",
+			redirectUri: "r",
+			now: NOW,
+		});
 		// Re-consent without a refresh_token
 		fanOutCredentials(paths, {
 			client,
@@ -201,10 +221,29 @@ describe("embeddedClient BYO precedence", () => {
 		expect(c.brokerUrl).toBe(""); // BYO holds the secret → direct, no broker
 	});
 
-	it("falls back to the Zosma embedded client (brokered) when no BYO", () => {
+	it("uses environment-configured Zosma client when no BYO", () => {
 		const c = embeddedClient();
-		expect(c.clientId).toBeTruthy();
-		expect(c.brokerUrl).toBeTruthy(); // brokered flow
+		expect(c.clientId).toBe(TEST_CLIENT_ID);
+		expect(c.brokerUrl).toBe(TEST_BROKER_URL); // brokered flow
+	});
+
+	it("does not use a source default when environment config is absent", () => {
+		delete process.env.ZOSMA_GOOGLE_CLIENT_ID;
+		delete process.env.ZOSMA_OAUTH_BROKER_URL;
+		const c = embeddedClient();
+		expect(c.clientId).toBe("");
+		expect(c.brokerUrl).toBe("");
+	});
+
+	it("never reads a Zosma client secret from build or runtime environment", () => {
+		const previous = process.env.ZOSMA_GOOGLE_CLIENT_SECRET;
+		process.env.ZOSMA_GOOGLE_CLIENT_SECRET = "not-a-real-secret";
+		try {
+			expect(embeddedClient().clientSecret).toBe("");
+		} finally {
+			if (previous === undefined) delete process.env.ZOSMA_GOOGLE_CLIENT_SECRET;
+			else process.env.ZOSMA_GOOGLE_CLIENT_SECRET = previous;
+		}
 	});
 });
 
@@ -218,7 +257,13 @@ describe("googleStatus", () => {
 	});
 
 	it("reports connected + email + per-product scopes after fan-out", () => {
-		fanOutCredentials(paths, { client, tokens, email: "u@example.com", redirectUri: "r", now: NOW });
+		fanOutCredentials(paths, {
+			client,
+			tokens,
+			email: "u@example.com",
+			redirectUri: "r",
+			now: NOW,
+		});
 		const s = googleStatus(paths);
 		expect(s.connected).toBe(true);
 		expect(s.email).toBe("u@example.com");
@@ -236,7 +281,13 @@ describe("googleStatus", () => {
 	});
 
 	it("reports granted capability per product (granted-vs-requested diff)", () => {
-		fanOutCredentials(paths, { client, tokens, email: "u@example.com", redirectUri: "r", now: NOW });
+		fanOutCredentials(paths, {
+			client,
+			tokens,
+			email: "u@example.com",
+			redirectUri: "r",
+			now: NOW,
+		});
 		const s = googleStatus(paths);
 		expect(s.granted.gmail).toBe("modify");
 		expect(s.granted.calendar).toBe("full");
@@ -268,7 +319,13 @@ describe("googleStatus", () => {
 
 describe("disconnectGoogle", () => {
 	it("revokes the refresh token and deletes both token files", async () => {
-		fanOutCredentials(paths, { client, tokens, email: "u@example.com", redirectUri: "r", now: NOW });
+		fanOutCredentials(paths, {
+			client,
+			tokens,
+			email: "u@example.com",
+			redirectUri: "r",
+			now: NOW,
+		});
 		const revoke = vi.fn(() => Promise.resolve());
 		const res = await disconnectGoogle(paths, revoke);
 		expect(revoke).toHaveBeenCalledWith("rt-1");
@@ -280,7 +337,13 @@ describe("disconnectGoogle", () => {
 	});
 
 	it("still deletes local files when revoke fails (best-effort)", async () => {
-		fanOutCredentials(paths, { client, tokens, email: "u@example.com", redirectUri: "r", now: NOW });
+		fanOutCredentials(paths, {
+			client,
+			tokens,
+			email: "u@example.com",
+			redirectUri: "r",
+			now: NOW,
+		});
 		// Per the vitest gotcha: a throwing mock + beforeEach mockReset causes a
 		// false unhandled-rejection failure. Use mockImplementationOnce(reject)
 		// and assert via resolves.
@@ -299,11 +362,21 @@ describe("disconnectGoogle", () => {
 	});
 
 	it("also clears Cowork scope-prefs + BYO files when cowork paths given", async () => {
-		fanOutCredentials(paths, { client, tokens, email: "u@example.com", redirectUri: "r", now: NOW });
+		fanOutCredentials(paths, {
+			client,
+			tokens,
+			email: "u@example.com",
+			redirectUri: "r",
+			now: NOW,
+		});
 		const cowork = defaultCoworkGooglePaths(join(agentDir, "zosmaai"));
 		writeScopePrefs(cowork, DEFAULT_PREFS);
 		writeByoClient(cowork, { clientId: "id", clientSecret: "s" });
-		const res = await disconnectGoogle(paths, vi.fn(() => Promise.resolve()), cowork);
+		const res = await disconnectGoogle(
+			paths,
+			vi.fn(() => Promise.resolve()),
+			cowork,
+		);
 		expect(existsSync(cowork.scopePrefs)).toBe(false);
 		expect(existsSync(cowork.byoClient)).toBe(false);
 		expect(res.removed).toContain(cowork.scopePrefs);
@@ -331,7 +404,13 @@ describe("migrateLegacyTokens", () => {
 	});
 
 	it("does not clobber an existing live connection", () => {
-		fanOutCredentials(paths, { client, tokens, email: "u@example.com", redirectUri: "r", now: NOW });
+		fanOutCredentials(paths, {
+			client,
+			tokens,
+			email: "u@example.com",
+			redirectUri: "r",
+			now: NOW,
+		});
 		writeJson(paths.legacyOAuth, {
 			clientId: "legacy-id",
 			clientSecret: "legacy-secret",

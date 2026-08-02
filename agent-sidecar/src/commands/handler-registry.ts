@@ -30,6 +30,10 @@ import {
 	handleGetAuthStatus,
 } from "./handlers/auth.js";
 
+import {
+	handleGetOnboardingStatus,
+} from "./handlers/onboarding.js";
+
 // ── Custom provider handlers ───────────────────────────────────────────────
 import {
 	handleListCustomProviders,
@@ -217,6 +221,10 @@ export function createHandler(deps: HandlerDependencies): (cmd: Command) => Prom
 
 			case "get_auth_status":
 				await handleGetAuthStatus(deps, cmd as any);
+				break;
+
+			case "get_onboarding_status":
+				await handleGetOnboardingStatus(deps, cmd as any);
 				break;
 
 			// ═══════════════════════════════════════════════════════════════

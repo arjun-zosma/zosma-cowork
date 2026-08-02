@@ -20,7 +20,10 @@ function connectedAuth(): Record<string, unknown> {
 	return {
 		providers: [],
 		supported: [],
-		apiKeyProviders: [{ id: "zosmaai-router", displayName: "Zosma AI" }, { id: "anthropic", displayName: "Anthropic" }],
+		apiKeyProviders: [
+			{ id: "zosmaai-router", displayName: "Zosma AI" },
+			{ id: "anthropic", displayName: "Anthropic" },
+		],
 	};
 }
 
@@ -47,7 +50,12 @@ describe("ZosmaStatus", () => {
 	it("renders connected status when zosmaai-router is in apiKeyProviders", async () => {
 		invokeMock.mockImplementation((cmd: string) => {
 			if (cmd === "get_zosma_usage") {
-				return Promise.resolve({ plan: "pro", used: 42, limit: 1000, resetAt: "2026-08-01T00:00:00Z" });
+				return Promise.resolve({
+					plan: "pro",
+					used: 42,
+					limit: 1000,
+					resetAt: "2026-08-01T00:00:00Z",
+				});
 			}
 			return Promise.resolve(undefined);
 		});
@@ -56,7 +64,7 @@ describe("ZosmaStatus", () => {
 		render(<ZosmaStatus authStatus={authStatus} onChange={vi.fn()} />);
 
 		await waitFor(() => {
-			expect(screen.getByText("Zosma AI (Router)")).toBeTruthy();
+			expect(screen.getByText("Zosma AI Router")).toBeTruthy();
 		});
 		expect(screen.getByText("Connected")).toBeTruthy();
 	});
@@ -64,7 +72,12 @@ describe("ZosmaStatus", () => {
 	it("renders safe usage DTO without raw keys or identifiers", async () => {
 		invokeMock.mockImplementation((cmd: string) => {
 			if (cmd === "get_zosma_usage") {
-				return Promise.resolve({ plan: "pro", used: 42, limit: 1000, resetAt: "2026-08-01T00:00:00Z" });
+				return Promise.resolve({
+					plan: "pro",
+					used: 42,
+					limit: 1000,
+					resetAt: "2026-08-01T00:00:00Z",
+				});
 			}
 			return Promise.resolve(undefined);
 		});
@@ -80,6 +93,29 @@ describe("ZosmaStatus", () => {
 		expect(text).not.toContain("sk-");
 		expect(text).not.toContain("Bearer");
 		expect(text).not.toContain("device-id");
+	});
+
+	it("renders provider limits and reset information from production usage DTO", async () => {
+		invokeMock.mockImplementation((cmd: string) => {
+			if (cmd === "get_zosma_usage") {
+				return Promise.resolve({
+					plan: "trial",
+					providers: [{ provider: "zosmaai", label: "Zosma AI", cap: 100, used: 12, remaining: 88 }],
+					resetsInHours: 7.2,
+					expiresAt: "2026-09-01T00:00:00Z",
+				});
+			}
+			return Promise.resolve(undefined);
+		});
+
+		render(<ZosmaStatus authStatus={connectedAuth()} onChange={vi.fn()} />);
+
+		await waitFor(() => {
+			expect(screen.getByText("Zosma AI")).toBeTruthy();
+			expect(screen.getByText("12 / 100")).toBeTruthy();
+		});
+		expect(screen.getByText(/Resets in 8 hours/)).toBeTruthy();
+		expect(screen.getByText(/Access until/)).toBeTruthy();
 	});
 
 	it("renders 'No usage data' when get_zosma_usage returns empty", async () => {
@@ -98,8 +134,11 @@ describe("ZosmaStatus", () => {
 	});
 
 	it("shows refresh button that calls refresh_zosma_models", async () => {
-		const refreshImpl = vi.fn().mockResolvedValue({ modelCount: 15, selectedModelId: "p/some-model" });
-		const usageImpl = vi.fn()
+		const refreshImpl = vi
+			.fn()
+			.mockResolvedValue({ modelCount: 15, selectedModelId: "p/some-model" });
+		const usageImpl = vi
+			.fn()
 			.mockResolvedValueOnce({ used: 10, limit: 100 }) // initial mount
 			.mockResolvedValueOnce({ used: 50, limit: 200 }); // after refresh
 
@@ -264,7 +303,7 @@ describe("ZosmaStatus", () => {
 	it("renders sign-in button when zosmaai-router is NOT in apiKeyProviders", async () => {
 		render(<ZosmaStatus authStatus={disconnectedAuth()} onChange={vi.fn()} />);
 
-		expect(screen.getByText(/sign in with zosma/i)).toBeTruthy();
+		expect(screen.getByText(/connect/i)).toBeTruthy();
 	});
 
 	it("reconnect uses browser flow via start_zosma_auth", async () => {
@@ -280,7 +319,7 @@ describe("ZosmaStatus", () => {
 
 		render(<ZosmaStatus authStatus={disconnectedAuth()} onChange={vi.fn()} />);
 
-		fireEvent.click(screen.getByRole("button", { name: /sign in with zosma/i }));
+		fireEvent.click(screen.getByRole("button", { name: /connect/i }));
 
 		await waitFor(() => {
 			expect(invokeMock).toHaveBeenCalledWith("start_zosma_auth");
@@ -303,7 +342,7 @@ describe("ZosmaStatus", () => {
 
 		render(<ZosmaStatus authStatus={disconnectedAuth()} onChange={vi.fn()} />);
 
-		fireEvent.click(screen.getByRole("button", { name: /sign in with zosma/i }));
+		fireEvent.click(screen.getByRole("button", { name: /connect/i }));
 
 		await waitFor(() => {
 			expect(screen.getByText(/waiting/i)).toBeTruthy();

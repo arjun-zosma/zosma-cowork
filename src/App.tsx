@@ -2,7 +2,7 @@ import { ChatView } from "@/chat/ChatView";
 import { log } from "./lib/log";
 import { HelpDialog } from "@/components/HelpDialog";
 import { HomeView } from "@/components/HomeView";
-import { ZosmaLoginScreen } from "@/components/ZosmaLoginScreen";
+import { ZosmaRouterAnnouncement } from "@/components/ZosmaRouterAnnouncement";
 import { SettingsPage } from "@/components/SettingsPage";
 import { Sidebar } from "@/components/Sidebar";
 import { SplashScreen } from "@/components/SplashScreen";
@@ -11,6 +11,8 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { RenameDialog } from "@/components/ui/rename-dialog";
 import { useUpdate } from "@/contexts/UpdateProvider";
 import { useAuth } from "@/hooks/useAuth";
+import { useOnboardingStatus } from "@/hooks/useOnboardingStatus";
+import { useZosmaAuth } from "@/hooks/useZosmaAuth";
 import { usePiStream } from "@/hooks/usePiStream";
 import { useProviders } from "@/hooks/useProviders";
 import { useTelemetry } from "@/hooks/useTelemetry";
@@ -81,6 +83,37 @@ function App() {
 	// modal even without stored credentials.
 	const [skipOnboarding, setSkipOnboarding] = useState(false);
 	const zosmaEnabled = import.meta.env.VITE_ZOSMA_AUTH_ENABLED !== "false";
+
+	// Onboarding status: explicit, non-secret classification for startup routing.
+	// Replaces the old hasCredentials-only decision with a clear contract.
+	const {
+		status: onboardingStatus,
+		loading: onboardingLoading,
+		refresh: refreshOnboardingStatus,
+	} = useOnboardingStatus();
+	const isNewUser = onboardingStatus?.hasExistingSetup === false;
+	// Announcement: show only for existing users without Zosma, and only once per version.
+	const ZOSMA_ROUTER_ANNOUNCEMENT_KEY = "zosma-router-announcement-v1";
+	const [announcementDismissed, setAnnouncementDismissed] = useState(() => {
+		try {
+			return localStorage.getItem(ZOSMA_ROUTER_ANNOUNCEMENT_KEY) === "1";
+		} catch {
+			return false;
+		}
+	});
+	const showRouterAnnouncement =
+		zosmaEnabled &&
+		isNewUser === false &&
+		onboardingStatus?.hasExistingSetup === true &&
+		onboardingStatus.zosmaConnected === false &&
+		!announcementDismissed;
+
+	// Zosma auth for the announcement modal (single transaction, no duplication).
+	const handleAnnouncementComplete = useCallback(() => {
+		// Status refresh closes announcement only after sidecar persisted Zosma.
+		void refreshOnboardingStatus();
+	}, [refreshOnboardingStatus]);
+	const announcementAuth = useZosmaAuth({ onComplete: handleAnnouncementComplete });
 	const [, setSidebarView] = useState("chats");
 	const handleChangeView = useCallback((view: string) => {
 		setSidebarView(view);
@@ -141,17 +174,23 @@ function App() {
 	}, []);
 
 	const needsOnboarding = authLoading === false && !hasCredentials;
-	const telemetryUndecided = false;
-	// While the sidecar is still booting we can't determine credentials, so
-	// show a loading splash rather than the onboarding/Welcome screen. Keeping
-	// `authLoading` in the condition avoids a one-frame onboarding flash during
-	// the credentials re-check that fires right after the sidecar becomes ready.
-	const initializing =
-		telemetryUndecided || (!sidecarReady && (authLoading || hasCredentials !== true));
 
-	// New installs enter through Zosma Google login. Cowork's private Pi state
-	// has no inherited credentials, so no model registry is shown before this.
-	const showZosmaLogin = zosmaEnabled && !authLoading && !hasCredentials;
+	// Startup routing based on explicit onboarding status.
+	// - New user: HomeView connect step (Zosma-first, expandable alternatives)
+	// - Existing user: normal chat; announcement if eligible
+	// - Zosma-connected: normal chat, no announcement
+	const onboardingReady = !onboardingLoading && onboardingStatus !== null;
+	const showNewUserConnect = onboardingReady && isNewUser && !skipOnboarding && !showKeyEntry;
+	const telemetryUndecided = false;
+	// Never render ChatView while startup classification is unresolved. Fresh
+	// installs are classified from disk without waiting for Pi; existing users
+	// remain on splash until sidecar status and models are ready.
+	const waitingForStartupClassification = !onboardingReady;
+	const initializing =
+		!showNewUserConnect &&
+		!showKeyEntry &&
+		(telemetryUndecided || waitingForStartupClassification || (!sidecarReady && (authLoading || hasCredentials !== true)));
+
 	// Whether to render the legacy Connect / API-key modal. It remains reachable
 	// from Settings, but is not part of Zosma first-run onboarding.
 	const showConnectModal = (!zosmaEnabled && needsOnboarding && !skipOnboarding) || showKeyEntry;
@@ -670,16 +709,21 @@ function App() {
 	}, []);
 
 	// ── Deep content search across all session bodies ──
-	const handleDeepSearch = useCallback(async (query: string) => {
-		try {
-			const result = await invoke("search_sessions", { query, allFolders });
-			const data = result as { matches?: { file: string; snippet: string; matchCount: number }[] };
-			return data.matches ?? [];
-		} catch (err) {
-			log.error("Deep search failed:", err);
-			return [];
-		}
-	}, [allFolders]);
+	const handleDeepSearch = useCallback(
+		async (query: string) => {
+			try {
+				const result = await invoke("search_sessions", { query, allFolders });
+				const data = result as {
+					matches?: { file: string; snippet: string; matchCount: number }[];
+				};
+				return data.matches ?? [];
+			} catch (err) {
+				log.error("Deep search failed:", err);
+				return [];
+			}
+		},
+		[allFolders],
+	);
 
 	const handleSessionSelect = useCallback(
 		async (file: string) => {
@@ -744,7 +788,8 @@ function App() {
 	// Hide the app chrome (sidebar, mobile bars, share button) whenever the
 	// main pane is showing a full-screen state: onboarding, settings, or the
 	// startup loading splash (#169).
-	const hideChrome = showZosmaLogin || showConnectModal || showSettings || initializing || models.length === 0;
+	const hideChrome =
+		showNewUserConnect || showConnectModal || showSettings || initializing || models.length === 0;
 
 	const sidebarSessions = sessionEntries.map((s) => ({
 		id: s.file,
@@ -794,6 +839,25 @@ function App() {
 
 			<HelpDialog open={showHelp} commands={BUILTIN_COMMANDS} onClose={() => setShowHelp(false)} />
 
+			{/* Zosma Router release announcement (existing users, no Zosma) */}
+			{showRouterAnnouncement && (
+				<ZosmaRouterAnnouncement
+					open={true}
+					phase={announcementAuth.phase}
+					error={announcementAuth.error}
+					onStartTrial={() => announcementAuth.start()}
+					onCancelAuth={() => announcementAuth.cancel()}
+					onDismiss={() => {
+						try {
+							localStorage.setItem(ZOSMA_ROUTER_ANNOUNCEMENT_KEY, "1");
+						} catch {
+							// non-critical
+						}
+						setAnnouncementDismissed(true);
+					}}
+				/>
+			)}
+
 			{/* Sidebar — desktop: visible, mobile: slide-over */}
 			{!hideChrome && (
 				<>
@@ -840,24 +904,31 @@ function App() {
 						key={
 							initializing
 								? "splash"
-								: showZosmaLogin
-									? "zosma-login"
+								: showNewUserConnect
+									? "connect"
 									: showConnectModal
 										? "connect"
-									: showSettings
-										? "settings"
-										: loadingSession
-											? "loading"
-											: "chat"
+										: showSettings
+											? "settings"
+											: loadingSession
+												? "loading"
+												: "chat"
 						}
 						className="flex-1 flex flex-col min-h-0 animate-fade-in"
 					>
 						{initializing ? (
 							<SplashScreen />
-						) : showZosmaLogin ? (
-							<ZosmaLoginScreen onComplete={() => {}} />
-						) : models.length === 0 ? (
-							<SplashScreen />
+						) : showNewUserConnect ? (
+							<HomeView
+								initialStep="connect"
+								onComplete={handleConnectComplete}
+								onSkipToSettings={handleSkipToSettings}
+								onDismiss={handleDismissConnect}
+								hasSubscription={hasSubscription}
+								onZosmaComplete={() => {
+									void refreshOnboardingStatus();
+								}}
+							/>
 						) : showConnectModal ? (
 							<HomeView
 								onComplete={handleConnectComplete}
@@ -873,6 +944,8 @@ function App() {
 								}}
 								onShowKeyEntry={() => setShowKeyEntry(true)}
 							/>
+						) : models.length === 0 ? (
+							<SplashScreen />
 						) : loadingSession ? (
 							<div className="flex-1 flex flex-col items-center justify-center gap-4">
 								<div className="w-8 h-8 rounded-full border-2 border-primary/30 border-t-primary animate-spin" />
