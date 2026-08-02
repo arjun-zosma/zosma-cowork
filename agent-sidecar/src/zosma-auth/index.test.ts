@@ -62,8 +62,8 @@ import * as customProviders from "../custom-providers.js";
 // ── Helpers ───────────────────────────────────────────────────────────────
 
 const PI_DIR = "/tmp/test-pi";
-const LOCAL_AUTH = "http://localhost:0/auth";
-const LOCAL_ROUTER = "http://localhost:0/router/v1";
+const LOCAL_AUTH = "https://auth.example.test";
+const LOCAL_ROUTER = "https://router.example.test/v1";
 
 function makeDeps(
 	overrides?: Partial<HandlerDependencies>,
@@ -115,6 +115,13 @@ beforeEach(() => {
 // ── Tests ─────────────────────────────────────────────────────────────────
 
 describe("startZosmaAuth", () => {
+	it("fails closed when auth configuration is absent", async () => {
+		setZosmaAuthConfig({ authBaseUrl: "", routerBaseUrl: "", fetch: vi.fn() });
+
+		await expect(startZosmaAuth(PI_DIR)).rejects.toThrow("ZOSMA_AUTH_BASE_URL is not configured");
+		expect(state.savePending).not.toHaveBeenCalled();
+	});
+
 	it("persists pending transaction BEFORE network call", async () => {
 		const fetch = vi.fn().mockRejectedValue(new Error("network error"));
 		setZosmaAuthConfig({ fetch });
@@ -628,10 +635,10 @@ describe("refreshZosmaModels", () => {
 		expect(saved.models[0].id).toBe("p/new-model");
 	});
 
-	it("uses managed provider environment and preserves its base URL", async () => {
+	it("uses configured auth URL and preserves provider base URL", async () => {
 		(customProviders.readProviderEntry as Mock).mockReturnValue({
-			apiKey: "prod-key",
-			baseUrl: "https://router.zosma.ai/v1",
+			apiKey: "configured-key",
+			baseUrl: LOCAL_ROUTER,
 			models: [],
 		});
 		const model = { id: "p/prod-model", display_name: "Prod", input: ["text"] };
@@ -643,9 +650,9 @@ describe("refreshZosmaModels", () => {
 			makeDeps({}, [{ id: "p/prod-model", provider: "zosmaai-router" }]),
 		);
 
-		expect((fetch as Mock).mock.calls[0][0]).toBe("https://auth.zosma.ai/v1/models");
+		expect((fetch as Mock).mock.calls[0][0]).toBe(`${LOCAL_AUTH}/v1/models`);
 		const saved = (customProviders.saveCustomProvider as Mock).mock.calls[0][1];
-		expect(saved.baseUrl).toBe("https://router.zosma.ai/v1");
+		expect(saved.baseUrl).toBe(LOCAL_ROUTER);
 	});
 });
 
@@ -681,17 +688,17 @@ describe("getZosmaUsage", () => {
 		});
 	});
 
-	it("uses managed provider environment for usage requests", async () => {
+	it("uses configured auth URL for usage requests", async () => {
 		(customProviders.readProviderEntry as Mock).mockReturnValue({
-			apiKey: "prod-key",
-			baseUrl: "https://router.zosma.ai/v1",
+			apiKey: "configured-key",
+			baseUrl: LOCAL_ROUTER,
 		});
 		const fetch = mockFetchResponse(200, { plan: "pro", used: 1, limit: 100 });
 		setZosmaAuthConfig({ authBaseUrl: LOCAL_AUTH, fetch });
 
 		await getZosmaUsage(PI_DIR);
 
-		expect((fetch as Mock).mock.calls[0][0]).toBe("https://auth.zosma.ai/v1/me/usage");
+		expect((fetch as Mock).mock.calls[0][0]).toBe(`${LOCAL_AUTH}/v1/me/usage`);
 	});
 
 	it("rejects malformed non-object response", async () => {

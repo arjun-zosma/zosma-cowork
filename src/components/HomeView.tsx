@@ -95,7 +95,7 @@ export function HomeView({
 	});
 
 	// ponytail: gate Zosma card behind env var until backend staging is verified.
-	// Remove check after staging auth.zosma.ai + router.zosma.ai are live.
+	// Remove check after configured staging auth and router services are live.
 	const zosmaEnabled = import.meta.env.VITE_ZOSMA_AUTH_ENABLED !== "false";
 
 	const [apiKey, setApiKey] = useState("");

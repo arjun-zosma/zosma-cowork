@@ -18,6 +18,10 @@ import { DEFAULT_PREFS } from "./scopes.js";
 let agentDir: string;
 let paths: GooglePaths;
 const NOW = 1_700_000_000_000;
+const TEST_CLIENT_ID = "test-google-client-id";
+const TEST_BROKER_URL = "https://broker.example.test";
+let previousClientId: string | undefined;
+let previousBrokerUrl: string | undefined;
 
 function writeJson(path: string, value: unknown) {
 	mkdirSync(dirname(path), { recursive: true });
@@ -29,12 +33,20 @@ function readJson(path: string): any {
 }
 
 beforeEach(() => {
+	previousClientId = process.env.ZOSMA_GOOGLE_CLIENT_ID;
+	previousBrokerUrl = process.env.ZOSMA_OAUTH_BROKER_URL;
+	process.env.ZOSMA_GOOGLE_CLIENT_ID = TEST_CLIENT_ID;
+	process.env.ZOSMA_OAUTH_BROKER_URL = TEST_BROKER_URL;
 	agentDir = mkdtempSync(join(tmpdir(), "google-broker-"));
 	paths = defaultGooglePaths(agentDir);
 });
 
 afterEach(() => {
 	rmSync(agentDir, { recursive: true, force: true });
+	if (previousClientId === undefined) delete process.env.ZOSMA_GOOGLE_CLIENT_ID;
+	else process.env.ZOSMA_GOOGLE_CLIENT_ID = previousClientId;
+	if (previousBrokerUrl === undefined) delete process.env.ZOSMA_OAUTH_BROKER_URL;
+	else process.env.ZOSMA_OAUTH_BROKER_URL = previousBrokerUrl;
 });
 
 const client = { clientId: "zosma-id", clientSecret: "zosma-secret", brokerUrl: "" };
@@ -209,10 +221,18 @@ describe("embeddedClient BYO precedence", () => {
 		expect(c.brokerUrl).toBe(""); // BYO holds the secret → direct, no broker
 	});
 
-	it("falls back to the Zosma embedded client (brokered) when no BYO", () => {
+	it("uses environment-configured Zosma client when no BYO", () => {
 		const c = embeddedClient();
-		expect(c.clientId).toBeTruthy();
-		expect(c.brokerUrl).toBeTruthy(); // brokered flow
+		expect(c.clientId).toBe(TEST_CLIENT_ID);
+		expect(c.brokerUrl).toBe(TEST_BROKER_URL); // brokered flow
+	});
+
+	it("does not use a source default when environment config is absent", () => {
+		delete process.env.ZOSMA_GOOGLE_CLIENT_ID;
+		delete process.env.ZOSMA_OAUTH_BROKER_URL;
+		const c = embeddedClient();
+		expect(c.clientId).toBe("");
+		expect(c.brokerUrl).toBe("");
 	});
 
 	it("never reads a Zosma client secret from build or runtime environment", () => {

@@ -76,37 +76,22 @@ export const UNION_SCOPES: string[] = [...Object.values(GOOGLE_SCOPES), ...IDENT
 // config that still carries one (direct-refresh fallback); new connects leave
 // it empty and route everything through the broker.
 
-// Both of these are PUBLIC by design (the client_id is visible in every consent
-// URL; the broker URL is a public HTTPS endpoint). They are safe to commit and
-// to ship in the desktop bundle. The SECRET never lives here — it stays in the
-// broker (Secret Manager). Defaults point at STAGING; a prod release overrides
-// them via the build-time bake below (scripts/prebuild.mjs) or env.
-/** Default deployed staging broker. Override with ZOSMA_OAUTH_BROKER_URL. */
-export const DEFAULT_BROKER_URL = "https://broker-uoux53xara-uc.a.run.app";
-/** Default (staging) public Web client id. Override with ZOSMA_GOOGLE_CLIENT_ID. */
-export const DEFAULT_CLIENT_ID =
-	"830231223031-nuqrip1jo53pa55ithrrbu4jk0nu60s7.apps.googleusercontent.com";
-
-// Build-time bake slots. scripts/prebuild.mjs replaces these literals with the
-// matching env var's value at `tauri build` time when set (so a packaged app
-// launched from its icon — which has no shell env — still gets the right values).
-// Left unreplaced (still starting with "__ZOSMA_") they are ignored.
+// Build-time bake slots. scripts/prebuild.mjs replaces these placeholders with
+// environment values for packaged builds. Unreplaced slots stay empty so a
+// missing configuration fails closed instead of selecting an environment.
 const BAKED_CLIENT_ID = "__ZOSMA_GOOGLE_CLIENT_ID__";
 const BAKED_BROKER_URL = "__ZOSMA_OAUTH_BROKER_URL__";
 const unbaked = (v: string): string => (v.startsWith("__ZOSMA_") ? "" : v.trim());
 
-/** Resolved broker base URL (env → baked → staging default; slashes trimmed). */
+/** Resolved broker base URL (environment → build value; slashes trimmed). */
 export function brokerUrl(): string {
-	const raw =
-		process.env.ZOSMA_OAUTH_BROKER_URL?.trim() || unbaked(BAKED_BROKER_URL) || DEFAULT_BROKER_URL;
+	const raw = process.env.ZOSMA_OAUTH_BROKER_URL?.trim() || unbaked(BAKED_BROKER_URL);
 	return raw.replace(/\/+$/, "");
 }
 
-/** Resolved public client id (env → baked → staging default). */
+/** Resolved public client id (environment → build value). */
 export function resolveClientId(): string {
-	return (
-		process.env.ZOSMA_GOOGLE_CLIENT_ID?.trim() || unbaked(BAKED_CLIENT_ID) || DEFAULT_CLIENT_ID
-	);
+	return process.env.ZOSMA_GOOGLE_CLIENT_ID?.trim() || unbaked(BAKED_CLIENT_ID);
 }
 
 export interface EmbeddedClient {

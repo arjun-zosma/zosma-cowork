@@ -81,7 +81,7 @@ if (antigravitySecret) {
 // (the Web client_id and broker HTTPS URL) — NO secret is ever baked, because
 // the secret lives only in the backend broker. Staging and production workflows
 // pass explicit values so packaged apps never depend on shell env at runtime.
-// Zosma Router's Google login is handled by auth.zosma.ai, not this config.
+// Zosma Router login uses its own server-side Google configuration.
 console.log("[prebuild] Injecting Zosma Google OAuth config (public)...");
 const buildMode = process.env.ZOSMA_RELEASE === "1"
 	? "production"

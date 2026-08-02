@@ -20,18 +20,14 @@ import { logWarn } from "../protocol.js";
 import { generateCodeVerifier, generateState, sha256Base64url } from "./crypto.js";
 import { deletePending, loadPending, savePending } from "./state.js";
 
-// ponytail: mutable defaults for test injection. Set via setZosmaAuthConfig.
-// Packaged builds replace baked endpoint slots in prebuild.mjs; shell env still
-// wins for local development.
+// Config comes only from process env, build-time replacement, or explicit
+// runtime configuration. Unreplaced slots stay empty so missing configuration
+// fails closed instead of selecting an environment.
 const BAKED_AUTH_BASE_URL = "__ZOSMA_AUTH_BASE_URL__";
 const BAKED_ROUTER_BASE_URL = "__ZOSMA_ROUTER_BASE_URL__";
-const bakedOr = (value: string, fallback: string): string =>
-	value.startsWith("__ZOSMA_") ? fallback : value;
-let authBaseUrl =
-	process.env.ZOSMA_AUTH_BASE_URL?.trim() || bakedOr(BAKED_AUTH_BASE_URL, "https://auth.zosma.ai");
-let routerBaseUrl =
-	process.env.ZOSMA_ROUTER_BASE_URL?.trim() ||
-	bakedOr(BAKED_ROUTER_BASE_URL, "https://router.zosma.ai/v1");
+const unbaked = (value: string): string => (value.startsWith("__ZOSMA_") ? "" : value.trim());
+let authBaseUrl = process.env.ZOSMA_AUTH_BASE_URL?.trim() || unbaked(BAKED_AUTH_BASE_URL);
+let routerBaseUrl = process.env.ZOSMA_ROUTER_BASE_URL?.trim() || unbaked(BAKED_ROUTER_BASE_URL);
 let fetchImpl: typeof globalThis.fetch = globalThis.fetch;
 const DEVICE_ID_FILE = "zosma-device-id.txt";
 const ROUTER_CONFIG_FILE = "zosma-router-config.json";
@@ -52,10 +48,11 @@ function loadRouterConfig(piDir: string): void {
 		if (existsSync(file)) {
 			const raw = readFileSync(file, "utf-8");
 			const config = JSON.parse(raw) as { authBaseUrl?: string; routerBaseUrl?: string };
-			// Env vars take precedence over file config
-			if (!process.env.ZOSMA_AUTH_BASE_URL && config.authBaseUrl) authBaseUrl = config.authBaseUrl;
-			if (!process.env.ZOSMA_ROUTER_BASE_URL && config.routerBaseUrl)
-				routerBaseUrl = config.routerBaseUrl;
+			// Env vars take precedence over file config.
+			if (!process.env.ZOSMA_AUTH_BASE_URL && config.authBaseUrl?.trim())
+				authBaseUrl = config.authBaseUrl.trim();
+			if (!process.env.ZOSMA_ROUTER_BASE_URL && config.routerBaseUrl?.trim())
+				routerBaseUrl = config.routerBaseUrl.trim();
 		}
 	} catch {
 		// ignore corrupt config
@@ -91,20 +88,27 @@ export function setZosmaAuthConfig(config: {
 	if (config.fetch !== undefined) fetchImpl = config.fetch;
 }
 
+function requireConfigured(value: string, name: string): string {
+	const configured = value.trim().replace(/\/+$/, "");
+	if (!configured) throw new Error(`${name} is not configured`);
+	return configured;
+}
+
+function normalizedUrl(value: string): string {
+	return value.trim().replace(/\/+$/, "");
+}
+
 /**
- * Use managed provider's environment when runtime config is stale.
- * A prod router key is invalid against staging auth, and vice versa.
+ * Use explicitly configured auth URL for managed providers.
+ * Reject mismatched router configuration instead of guessing an environment.
  */
 function authBaseForProvider(provider: Record<string, unknown>): string {
-	const baseUrl = typeof provider.baseUrl === "string" ? provider.baseUrl : "";
-	try {
-		const url = new URL(baseUrl);
-		if (url.hostname === "router.zosma.ai") return "https://auth.zosma.ai";
-		if (url.hostname === "router.staging.zosma.ai") return "https://auth.staging.zosma.ai";
-	} catch {
-		// Fall back to configured auth URL for incomplete/legacy provider entries.
+	const providerBaseUrl = typeof provider.baseUrl === "string" ? normalizedUrl(provider.baseUrl) : "";
+	const configuredRouterUrl = normalizedUrl(routerBaseUrl);
+	if (providerBaseUrl && configuredRouterUrl && providerBaseUrl !== configuredRouterUrl) {
+		throw new Error("configured router URL does not match managed provider");
 	}
-	return authBaseUrl;
+	return requireConfigured(authBaseUrl, "ZOSMA_AUTH_BASE_URL");
 }
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -189,10 +193,12 @@ function mapInputCapability(row: Record<string, unknown>): ModelInput[] | undefi
  * 1. Generate state + PKCE code_verifier + S256 challenge
  * 2. Load/generate device ID
  * 3. Save pending transaction BEFORE network call
- * 4. POST to auth.zosma.ai to create server-side transaction
+ * 4. POST to configured auth service to create server-side transaction
  * 5. Return authorizationUrl for system browser
  */
 export async function startZosmaAuth(piDir: string): Promise<StartAuthResult> {
+	loadRouterConfig(piDir);
+	const configuredAuthBaseUrl = requireConfigured(authBaseUrl, "ZOSMA_AUTH_BASE_URL");
 	const state = generateState();
 	const codeVerifier = generateCodeVerifier();
 	const codeChallenge = sha256Base64url(codeVerifier);
@@ -202,7 +208,7 @@ export async function startZosmaAuth(piDir: string): Promise<StartAuthResult> {
 	// still has recoverable state.
 	savePending({ state, codeVerifier, deviceId, expiresAt: Date.now() + 10 * 60 * 1000 }, piDir);
 
-	const res = await fetchImpl(`${authBaseUrl}/v1/cowork/authorizations`, {
+	const res = await fetchImpl(`${configuredAuthBaseUrl}/v1/cowork/authorizations`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({
@@ -251,6 +257,10 @@ export async function completeZosmaAuth(
 	piDir: string,
 	deps: HandlerDependencies,
 ): Promise<CompleteAuthResult> {
+	loadRouterConfig(piDir);
+	const configuredAuthBaseUrl = requireConfigured(authBaseUrl, "ZOSMA_AUTH_BASE_URL");
+	requireConfigured(routerBaseUrl, "ZOSMA_ROUTER_BASE_URL");
+
 	// 1. Validate inputs
 	if (!code || !state) {
 		throw new Error("missing code or state");
@@ -267,7 +277,7 @@ export async function completeZosmaAuth(
 	}
 
 	// 3. Exchange code + PKCE verifier for router device key
-	const tokenRes = await fetchImpl(`${authBaseUrl}/v1/cowork/token`, {
+	const tokenRes = await fetchImpl(`${configuredAuthBaseUrl}/v1/cowork/token`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({
@@ -297,7 +307,7 @@ export async function completeZosmaAuth(
 	}
 
 	// 4. Fetch authenticated entitlement catalog; inference stays on routerBaseUrl.
-	const modelsRes = await fetchImpl(`${authBaseUrl}/v1/models`, {
+	const modelsRes = await fetchImpl(`${configuredAuthBaseUrl}/v1/models`, {
 		headers: { Authorization: `Bearer ${routerKey}` },
 		redirect: "error",
 		signal: AbortSignal.timeout(TIMEOUT_MS),
@@ -399,7 +409,7 @@ export async function disconnectZosmaAuth(piDir: string, deps: HandlerDependenci
 	loadRouterConfig(piDir);
 	const modelsPath = join(piDir, "models.json");
 	const provider = readProviderEntry(modelsPath, "zosmaai-router");
-	const providerAuthBaseUrl = provider ? authBaseForProvider(provider) : authBaseUrl;
+	const providerAuthBaseUrl = provider ? authBaseForProvider(provider) : "";
 
 	// 1. Server-side revoke (best-effort) — uses Bearer header per frozen contract
 	if (provider?.apiKey) {
@@ -496,7 +506,10 @@ export async function refreshZosmaModels(
 		saveCustomProvider(modelsPath, {
 			id: "zosmaai-router",
 			name: "Zosma AI",
-			baseUrl: typeof provider.baseUrl === "string" ? provider.baseUrl : routerBaseUrl,
+			baseUrl:
+				typeof provider.baseUrl === "string"
+					? provider.baseUrl
+					: requireConfigured(routerBaseUrl, "ZOSMA_ROUTER_BASE_URL"),
 			apiKey: provider.apiKey as string,
 			models,
 		});
