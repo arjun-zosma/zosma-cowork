@@ -9,17 +9,15 @@
 import { invoke } from "@tauri-apps/api/core";
 import { isTauri } from "@tauri-apps/api/core";
 import { useState } from "react";
+import { normalizeZosmaConfig } from "../lib/zosma-config";
 
 interface Props {
 	onDone: () => void;
 }
 
-const DEFAULT_AUTH_URL = "http://localhost:3000";
-const DEFAULT_ROUTER_URL = "http://localhost:3000/v1";
-
 export function RouterSetupScreen({ onDone }: Props) {
-	const [authBaseUrl, setAuthBaseUrl] = useState(DEFAULT_AUTH_URL);
-	const [routerBaseUrl, setRouterBaseUrl] = useState(DEFAULT_ROUTER_URL);
+	const [authBaseUrl, setAuthBaseUrl] = useState("");
+	const [routerBaseUrl, setRouterBaseUrl] = useState("");
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
@@ -27,11 +25,9 @@ export function RouterSetupScreen({ onDone }: Props) {
 		setError(null);
 		setSaving(true);
 		try {
+			const config = normalizeZosmaConfig(authBaseUrl, routerBaseUrl);
 			if (isTauri()) {
-				await invoke("configure_router", {
-					authBaseUrl: authBaseUrl.replace(/\/+$/, ""),
-					routerBaseUrl: routerBaseUrl.replace(/\/+$/, ""),
-				});
+				await invoke("configure_router", config);
 			}
 			onDone();
 		} catch (err: unknown) {
@@ -44,9 +40,7 @@ export function RouterSetupScreen({ onDone }: Props) {
 		<div className="flex-1 flex flex-col items-center justify-center min-h-0 p-8">
 			<div className="max-w-md w-full space-y-6">
 				<div className="text-center space-y-2">
-					<h1 className="text-2xl font-semibold text-foreground">
-						Connect Zosma Router
-					</h1>
+					<h1 className="text-2xl font-semibold text-foreground">Connect Zosma Router</h1>
 					<p className="text-sm text-muted-foreground">
 						Enter your Zosma Router URLs to connect. Then sign in with Zosma on the next screen.
 					</p>
@@ -63,7 +57,7 @@ export function RouterSetupScreen({ onDone }: Props) {
 							value={authBaseUrl}
 							onChange={(e) => setAuthBaseUrl(e.target.value)}
 							className="w-full px-3 py-2 rounded-lg border border-border bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
-							placeholder="http://localhost:3000"
+							placeholder="Required HTTPS URL"
 							disabled={saving}
 						/>
 					</div>
@@ -78,7 +72,7 @@ export function RouterSetupScreen({ onDone }: Props) {
 							value={routerBaseUrl}
 							onChange={(e) => setRouterBaseUrl(e.target.value)}
 							className="w-full px-3 py-2 rounded-lg border border-border bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
-							placeholder="http://localhost:3000/v1"
+							placeholder="Required HTTPS URL ending in /v1"
 							disabled={saving}
 						/>
 					</div>

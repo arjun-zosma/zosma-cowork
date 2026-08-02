@@ -26,8 +26,11 @@ import { deletePending, loadPending, savePending } from "./state.js";
 const BAKED_AUTH_BASE_URL = "__ZOSMA_AUTH_BASE_URL__";
 const BAKED_ROUTER_BASE_URL = "__ZOSMA_ROUTER_BASE_URL__";
 const unbaked = (value: string): string => (value.startsWith("__ZOSMA_") ? "" : value.trim());
-let authBaseUrl = process.env.ZOSMA_AUTH_BASE_URL?.trim() || unbaked(BAKED_AUTH_BASE_URL);
-let routerBaseUrl = process.env.ZOSMA_ROUTER_BASE_URL?.trim() || unbaked(BAKED_ROUTER_BASE_URL);
+const bakedAuthBaseUrl = unbaked(BAKED_AUTH_BASE_URL);
+const bakedRouterBaseUrl = unbaked(BAKED_ROUTER_BASE_URL);
+const buildConfigLocked = Boolean(bakedAuthBaseUrl && bakedRouterBaseUrl);
+let authBaseUrl = bakedAuthBaseUrl || process.env.ZOSMA_AUTH_BASE_URL?.trim() || "";
+let routerBaseUrl = bakedRouterBaseUrl || process.env.ZOSMA_ROUTER_BASE_URL?.trim() || "";
 let fetchImpl: typeof globalThis.fetch = globalThis.fetch;
 const DEVICE_ID_FILE = "zosma-device-id.txt";
 const ROUTER_CONFIG_FILE = "zosma-router-config.json";
@@ -43,20 +46,24 @@ const TIMEOUT_MS = 10_000;
  * persists across sidecar restarts.
  */
 function loadRouterConfig(piDir: string): void {
+	if (buildConfigLocked) return;
 	const file = join(piDir, ROUTER_CONFIG_FILE);
+	if (!existsSync(file)) return;
+
+	const raw = readFileSync(file, "utf-8");
+	let parsed: { authBaseUrl?: string; routerBaseUrl?: string };
 	try {
-		if (existsSync(file)) {
-			const raw = readFileSync(file, "utf-8");
-			const config = JSON.parse(raw) as { authBaseUrl?: string; routerBaseUrl?: string };
-			// Env vars take precedence over file config.
-			if (!process.env.ZOSMA_AUTH_BASE_URL && config.authBaseUrl?.trim())
-				authBaseUrl = config.authBaseUrl.trim();
-			if (!process.env.ZOSMA_ROUTER_BASE_URL && config.routerBaseUrl?.trim())
-				routerBaseUrl = config.routerBaseUrl.trim();
-		}
+		parsed = JSON.parse(raw) as { authBaseUrl?: string; routerBaseUrl?: string };
 	} catch {
-		// ignore corrupt config
+		throw new Error("persisted router configuration is invalid JSON");
 	}
+
+	const config = validateRouterConfig({
+		authBaseUrl: process.env.ZOSMA_AUTH_BASE_URL?.trim() || parsed.authBaseUrl || authBaseUrl,
+		routerBaseUrl: process.env.ZOSMA_ROUTER_BASE_URL?.trim() || parsed.routerBaseUrl || routerBaseUrl,
+	});
+	if (!process.env.ZOSMA_AUTH_BASE_URL) authBaseUrl = config.authBaseUrl;
+	if (!process.env.ZOSMA_ROUTER_BASE_URL) routerBaseUrl = config.routerBaseUrl;
 }
 
 /**
@@ -66,9 +73,16 @@ export function saveRouterConfig(
 	piDir: string,
 	config: { authBaseUrl: string; routerBaseUrl: string },
 ): void {
+	const validated = validateRouterConfig(config);
+	if (
+		buildConfigLocked &&
+		(validated.authBaseUrl !== bakedAuthBaseUrl || validated.routerBaseUrl !== bakedRouterBaseUrl)
+	) {
+		throw new Error("packaged router configuration cannot be overridden");
+	}
 	const file = join(piDir, ROUTER_CONFIG_FILE);
 	mkdirSync(piDir, { recursive: true });
-	writeFileSync(file, JSON.stringify(config, null, 2), "utf-8");
+	writeFileSync(file, JSON.stringify(validated, null, 2), "utf-8");
 }
 
 /**
@@ -83,19 +97,65 @@ export function setZosmaAuthConfig(config: {
 	routerBaseUrl?: string;
 	fetch?: typeof globalThis.fetch;
 }): void {
-	if (config.authBaseUrl !== undefined) authBaseUrl = config.authBaseUrl;
-	if (config.routerBaseUrl !== undefined) routerBaseUrl = config.routerBaseUrl;
+	if (config.authBaseUrl !== undefined || config.routerBaseUrl !== undefined) {
+		const validated = validateRouterConfig({
+			authBaseUrl: config.authBaseUrl ?? authBaseUrl,
+			routerBaseUrl: config.routerBaseUrl ?? routerBaseUrl,
+		});
+		if (
+			buildConfigLocked &&
+			(validated.authBaseUrl !== bakedAuthBaseUrl || validated.routerBaseUrl !== bakedRouterBaseUrl)
+		) {
+			throw new Error("packaged router configuration cannot be overridden");
+		}
+		authBaseUrl = validated.authBaseUrl;
+		routerBaseUrl = validated.routerBaseUrl;
+	}
 	if (config.fetch !== undefined) fetchImpl = config.fetch;
 }
 
-function requireConfigured(value: string, name: string): string {
-	const configured = value.trim().replace(/\/+$/, "");
-	if (!configured) throw new Error(`${name} is not configured`);
-	return configured;
+function isLoopbackHost(hostname: string): boolean {
+	return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
 }
 
-function normalizedUrl(value: string): string {
-	return value.trim().replace(/\/+$/, "");
+function validateBaseUrl(name: string, value: string, pathname: string): string {
+	if (!value.trim()) throw new Error(`${name} is not configured`);
+	const normalized = value.trim().replace(/\/+$/, "");
+	let url: URL;
+	try {
+		url = new URL(normalized);
+	} catch {
+		throw new Error(`${name} must be a valid URL`);
+	}
+	const local = url.protocol === "http:" && isLoopbackHost(url.hostname);
+	if (url.protocol !== "https:" && !local) {
+		throw new Error(`${name} must use HTTPS (HTTP is allowed only for localhost development)`);
+	}
+	if (url.pathname !== pathname || url.search || url.hash || url.username || url.password) {
+		throw new Error(`${name} must be a base URL with path ${pathname}`);
+	}
+	return url.toString().replace(/\/+$/, "");
+}
+
+export function validateRouterConfig(config: {
+	authBaseUrl: string;
+	routerBaseUrl: string;
+}): { authBaseUrl: string; routerBaseUrl: string } {
+	const auth = validateBaseUrl("ZOSMA_AUTH_BASE_URL", config.authBaseUrl, "/");
+	const router = validateBaseUrl("ZOSMA_ROUTER_BASE_URL", config.routerBaseUrl, "/v1");
+	const authUrl = new URL(auth);
+	const routerUrl = new URL(router);
+	if (authUrl.protocol !== routerUrl.protocol) {
+		throw new Error("authBaseUrl and routerBaseUrl must use the same protocol");
+	}
+	if (authUrl.protocol === "http:" && (!isLoopbackHost(authUrl.hostname) || !isLoopbackHost(routerUrl.hostname))) {
+		throw new Error("HTTP router configuration is allowed only for localhost development");
+	}
+	return { authBaseUrl: auth, routerBaseUrl: router };
+}
+
+function currentConfig(): { authBaseUrl: string; routerBaseUrl: string } {
+	return validateRouterConfig({ authBaseUrl, routerBaseUrl });
 }
 
 /**
@@ -103,12 +163,12 @@ function normalizedUrl(value: string): string {
  * Reject mismatched router configuration instead of guessing an environment.
  */
 function authBaseForProvider(provider: Record<string, unknown>): string {
-	const providerBaseUrl = typeof provider.baseUrl === "string" ? normalizedUrl(provider.baseUrl) : "";
-	const configuredRouterUrl = normalizedUrl(routerBaseUrl);
-	if (providerBaseUrl && configuredRouterUrl && providerBaseUrl !== configuredRouterUrl) {
+	const config = currentConfig();
+	const providerBaseUrl = typeof provider.baseUrl === "string" ? provider.baseUrl.trim().replace(/\/+$/, "") : "";
+	if (providerBaseUrl && providerBaseUrl !== config.routerBaseUrl) {
 		throw new Error("configured router URL does not match managed provider");
 	}
-	return requireConfigured(authBaseUrl, "ZOSMA_AUTH_BASE_URL");
+	return config.authBaseUrl;
 }
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -198,7 +258,7 @@ function mapInputCapability(row: Record<string, unknown>): ModelInput[] | undefi
  */
 export async function startZosmaAuth(piDir: string): Promise<StartAuthResult> {
 	loadRouterConfig(piDir);
-	const configuredAuthBaseUrl = requireConfigured(authBaseUrl, "ZOSMA_AUTH_BASE_URL");
+	const configuredAuthBaseUrl = currentConfig().authBaseUrl;
 	const state = generateState();
 	const codeVerifier = generateCodeVerifier();
 	const codeChallenge = sha256Base64url(codeVerifier);
@@ -258,8 +318,8 @@ export async function completeZosmaAuth(
 	deps: HandlerDependencies,
 ): Promise<CompleteAuthResult> {
 	loadRouterConfig(piDir);
-	const configuredAuthBaseUrl = requireConfigured(authBaseUrl, "ZOSMA_AUTH_BASE_URL");
-	requireConfigured(routerBaseUrl, "ZOSMA_ROUTER_BASE_URL");
+	const config = currentConfig();
+	const configuredAuthBaseUrl = config.authBaseUrl;
 
 	// 1. Validate inputs
 	if (!code || !state) {
@@ -355,7 +415,7 @@ export async function completeZosmaAuth(
 		saveCustomProvider(modelsPath, {
 			id: "zosmaai-router",
 			name: "Zosma AI",
-			baseUrl: routerBaseUrl,
+			baseUrl: config.routerBaseUrl,
 			apiKey: routerKey,
 			models,
 		});
@@ -509,7 +569,7 @@ export async function refreshZosmaModels(
 			baseUrl:
 				typeof provider.baseUrl === "string"
 					? provider.baseUrl
-					: requireConfigured(routerBaseUrl, "ZOSMA_ROUTER_BASE_URL"),
+					: currentConfig().routerBaseUrl,
 			apiKey: provider.apiKey as string,
 			models,
 		});

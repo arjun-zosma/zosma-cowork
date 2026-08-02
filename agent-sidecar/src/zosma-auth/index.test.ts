@@ -8,6 +8,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { Mock } from "vitest";
+import { readFileSync } from "node:fs";
 
 // ── Module-level mocks (hoisted by vitest) ────────────────────────────────
 
@@ -34,7 +35,11 @@ vi.mock("../custom-providers.js", () => ({
 vi.mock("node:fs", () => ({
 	existsSync: vi.fn(() => true),
 	mkdirSync: vi.fn(),
-	readFileSync: vi.fn(() => "existing-device-id"),
+	readFileSync: vi.fn((path: string) =>
+		path.endsWith("zosma-router-config.json")
+			? JSON.stringify({ authBaseUrl: "https://auth.example.test", routerBaseUrl: "https://router.example.test/v1" })
+			: "existing-device-id",
+	),
 	writeFileSync: vi.fn(),
 }));
 
@@ -52,6 +57,7 @@ import {
 	refreshZosmaModels,
 	getZosmaUsage,
 	setZosmaAuthConfig,
+	validateRouterConfig,
 } from "./index.js";
 import type { HandlerDependencies } from "./index.js";
 import type { StartAuthResult, CompleteAuthResult } from "./index.js";
@@ -114,11 +120,62 @@ beforeEach(() => {
 
 // ── Tests ─────────────────────────────────────────────────────────────────
 
+describe("router configuration", () => {
+	it("accepts HTTPS service URLs", () => {
+		expect(
+			validateRouterConfig({
+				authBaseUrl: "https://auth.example.test/",
+				routerBaseUrl: "https://router.example.test/v1/",
+			}),
+		).toEqual({
+			authBaseUrl: "https://auth.example.test",
+			routerBaseUrl: "https://router.example.test/v1",
+		});
+	});
+
+	it("allows HTTP only for loopback development", () => {
+		expect(
+			validateRouterConfig({
+				authBaseUrl: "http://localhost:3000/",
+				routerBaseUrl: "http://127.0.0.1:3001/v1/",
+			}),
+		).toEqual({
+			authBaseUrl: "http://localhost:3000",
+			routerBaseUrl: "http://127.0.0.1:3001/v1",
+		});
+	});
+
+	it("rejects non-loopback HTTP configuration", () => {
+		expect(() =>
+			validateRouterConfig({
+				authBaseUrl: "http://auth.example.test",
+				routerBaseUrl: "http://router.example.test/v1",
+			}),
+		).toThrow("HTTPS");
+	});
+
+	it("rejects URLs with unexpected paths or query strings", () => {
+		expect(() =>
+			validateRouterConfig({
+				authBaseUrl: "https://auth.example.test/api",
+				routerBaseUrl: "https://router.example.test/v1?x=1",
+			}),
+		).toThrow("base URL");
+	});
+
+	it("rejects invalid persisted configuration", async () => {
+		(readFileSync as Mock).mockImplementationOnce(() =>
+			JSON.stringify({ authBaseUrl: "http://remote.example.test", routerBaseUrl: "https://router.example.test/v1" }),
+		);
+		await expect(startZosmaAuth(PI_DIR)).rejects.toThrow("HTTPS");
+	});
+});
+
 describe("startZosmaAuth", () => {
 	it("fails closed when auth configuration is absent", async () => {
-		setZosmaAuthConfig({ authBaseUrl: "", routerBaseUrl: "", fetch: vi.fn() });
-
-		await expect(startZosmaAuth(PI_DIR)).rejects.toThrow("ZOSMA_AUTH_BASE_URL is not configured");
+		expect(() =>
+			setZosmaAuthConfig({ authBaseUrl: "", routerBaseUrl: "", fetch: vi.fn() }),
+		).toThrow("ZOSMA_AUTH_BASE_URL is not configured");
 		expect(state.savePending).not.toHaveBeenCalled();
 	});
 
@@ -653,6 +710,21 @@ describe("refreshZosmaModels", () => {
 		expect((fetch as Mock).mock.calls[0][0]).toBe(`${LOCAL_AUTH}/v1/models`);
 		const saved = (customProviders.saveCustomProvider as Mock).mock.calls[0][1];
 		expect(saved.baseUrl).toBe(LOCAL_ROUTER);
+	});
+
+	it("rejects a provider URL that does not match configured router", async () => {
+		(customProviders.readProviderEntry as Mock).mockReturnValue({
+			apiKey: "configured-key",
+			baseUrl: "https://other-router.example.test/v1",
+			models: [],
+		});
+		const fetch = vi.fn();
+		setZosmaAuthConfig({ fetch });
+
+		await expect(
+			refreshZosmaModels(PI_DIR, makeDeps({}, [{ id: "p/model", provider: "zosmaai-router" }])),
+		).rejects.toThrow("does not match managed provider");
+		expect(fetch).not.toHaveBeenCalled();
 	});
 });
 

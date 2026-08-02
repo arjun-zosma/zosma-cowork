@@ -31,6 +31,7 @@ jobs:
           ZOSMA_OAUTH_BROKER_URL: ${{ vars.ZOSMA_OAUTH_BROKER_URL }}
           ZOSMA_AUTH_BASE_URL: ${{ vars.ZOSMA_AUTH_BASE_URL }}
           ZOSMA_ROUTER_BASE_URL: ${{ vars.ZOSMA_ROUTER_BASE_URL }}
+          ZOSMA_RELEASE_CONFIG_FINGERPRINT: ${{ secrets.ZOSMA_RELEASE_CONFIG_FINGERPRINT }}
         run: node scripts/validate-release-config.mjs
 
   build:
@@ -255,6 +256,7 @@ jobs:
           ZOSMA_OAUTH_BROKER_URL: ${{ vars.ZOSMA_OAUTH_BROKER_URL }}
           ZOSMA_AUTH_BASE_URL: ${{ vars.ZOSMA_AUTH_BASE_URL }}
           ZOSMA_ROUTER_BASE_URL: ${{ vars.ZOSMA_ROUTER_BASE_URL }}
+          ZOSMA_RELEASE_CONFIG_FINGERPRINT: ${{ secrets.ZOSMA_RELEASE_CONFIG_FINGERPRINT }}
           # Makes prebuild fail closed if release variables are not passed into
           # the Tauri build command; it must never fall back to staging.
           ZOSMA_RELEASE: "1"
