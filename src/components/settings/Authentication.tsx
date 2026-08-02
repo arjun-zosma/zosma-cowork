@@ -100,6 +100,9 @@ export function Authentication({ onShowKeyEntry: _onShowKeyEntry }: Props) {
 				{/* API key management */}
 				<ApiKeyRow authStatus={authStatus} onSaved={refreshStatus} />
 
+				{/* Zosma Router managed provider */}
+				<ZosmaStatus authStatus={authStatus as Record<string, unknown>} onChange={refreshStatus} />
+
 				{/* Custom OpenAI-compatible endpoint (issue #207) */}
 				<CustomProviderRow onChange={refreshStatus} />
 			</div>
