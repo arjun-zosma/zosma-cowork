@@ -25,8 +25,12 @@ jobs:
 
       - name: Verify production broker and public client id
         env:
+          # Public Google OAuth broker config; these values come from repository
+          # variables so changing environments never requires a source edit.
           ZOSMA_GOOGLE_CLIENT_ID: ${{ vars.ZOSMA_GOOGLE_CLIENT_ID }}
           ZOSMA_OAUTH_BROKER_URL: ${{ vars.ZOSMA_OAUTH_BROKER_URL }}
+          ZOSMA_AUTH_BASE_URL: ${{ vars.ZOSMA_AUTH_BASE_URL }}
+          ZOSMA_ROUTER_BASE_URL: ${{ vars.ZOSMA_ROUTER_BASE_URL }}
         run: node scripts/validate-release-config.mjs
 
   build:
@@ -241,16 +245,16 @@ jobs:
           # When unset, tauri-action skips updater artifacts + latest.json.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # Google OAuth config baked into the sidecar by scripts/prebuild.mjs
-          # (run here via tauri-action's beforeBuildCommand). These are PUBLIC
-          # values — the Web client_id and the prod broker URL; NO secret is
-          # baked (the client secret lives only in the broker / Secret Manager).
-          # Repo VARIABLES (not secrets). Release builds set production values
-          # explicitly; staging-build.yml sets its own explicit staging values.
+          # Google Workspace/Gmail broker config baked into the sidecar by
+          # scripts/prebuild.mjs (run here via tauri-action's beforeBuildCommand).
+          # These are PUBLIC values; NO secret is baked. Zosma Router's own
+          # Google login client is configured by llm-reseller, not this bundle.
+          # Repo VARIABLES (not secrets). Release builds read all values from
+          # variables; staging-build.yml supplies staging values.
           ZOSMA_GOOGLE_CLIENT_ID: ${{ vars.ZOSMA_GOOGLE_CLIENT_ID }}
           ZOSMA_OAUTH_BROKER_URL: ${{ vars.ZOSMA_OAUTH_BROKER_URL }}
-          ZOSMA_AUTH_BASE_URL: "https://auth.zosma.ai"
-          ZOSMA_ROUTER_BASE_URL: "https://router.zosma.ai/v1"
+          ZOSMA_AUTH_BASE_URL: ${{ vars.ZOSMA_AUTH_BASE_URL }}
+          ZOSMA_ROUTER_BASE_URL: ${{ vars.ZOSMA_ROUTER_BASE_URL }}
           # Makes prebuild fail closed if release variables are not passed into
           # the Tauri build command; it must never fall back to staging.
           ZOSMA_RELEASE: "1"

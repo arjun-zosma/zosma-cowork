@@ -112,9 +112,16 @@ The release is drafted automatically. Go to the [Releases page](https://github.c
 
 ### Production OAuth release guardrails
 
-Production release builds require GitHub repository variables `ZOSMA_GOOGLE_CLIENT_ID` and `ZOSMA_OAUTH_BROKER_URL`. CI validates the exact production broker host and `/health` response before building, then the Tauri prebuild fails closed instead of falling back to staging.
+Production release builds require these GitHub repository **Variables**:
 
-The client ID is public and may ship in the desktop bundle. The matching Google client secret stays in the OAuth broker's Google Secret Manager entry and is never passed to the desktop build. Do not add `ZOSMA_GOOGLE_CLIENT_SECRET` or any downloaded Google client JSON to a release environment; local credential files are gitignored.
+- `ZOSMA_GOOGLE_CLIENT_ID` — public client ID for the separate brokered Google Workspace/Gmail integration
+- `ZOSMA_OAUTH_BROKER_URL`
+- `ZOSMA_AUTH_BASE_URL`
+- `ZOSMA_ROUTER_BASE_URL`
+
+Staging uses the corresponding `ZOSMA_STAGING_*` variables. CI validates that all build values are present, HTTPS, non-staging for production, and that the configured broker health check passes. The Tauri prebuild then bakes the environment values into the packaged app and fails closed when production values are missing.
+
+Client IDs and endpoint URLs are public and may ship in the desktop bundle. Google client secrets stay in Google Secret Manager and are never passed to the desktop build. Do not add `ZOSMA_GOOGLE_CLIENT_SECRET` or any downloaded Google client JSON to a release environment; local credential files are gitignored.
 
 When the release is **published**, the following automatic actions happen:
 

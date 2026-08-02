@@ -77,42 +77,60 @@ if (antigravitySecret) {
 	console.warn("[prebuild]   no ANTIGRAVITY_CLIENT_SECRET — Gemini (Google) sign-in disabled");
 }
 
-// Inject the Zosma Google OAuth config. These are PUBLIC values (the Web
-// client_id and the broker's HTTPS URL) — NO secret is ever baked, because the
-// secret lives only in the backend broker. Staging and production workflows
+// Inject the brokered Google Workspace/Gmail config. These are PUBLIC values
+// (the Web client_id and broker HTTPS URL) — NO secret is ever baked, because
+// the secret lives only in the backend broker. Staging and production workflows
 // pass explicit values so packaged apps never depend on shell env at runtime.
+// Zosma Router's Google login is handled by auth.zosma.ai, not this config.
 console.log("[prebuild] Injecting Zosma Google OAuth config (public)...");
-const buildConfig = process.env.ZOSMA_RELEASE === "1"
-	? {
-			name: "production",
-			clientId: "830231223031-3ltm086u8ngc67ah5r1bk706g285ahkl.apps.googleusercontent.com",
-			broker: "https://broker-prod-uoux53xara-uc.a.run.app",
-			auth: "https://auth.zosma.ai",
-			router: "https://router.zosma.ai/v1",
-		}
+const buildMode = process.env.ZOSMA_RELEASE === "1"
+	? "production"
 	: process.env.ZOSMA_STAGING === "1"
-		? {
-				name: "staging",
-				clientId: "830231223031-nuqrip1jo53pa55ithrrbu4jk0nu60s7.apps.googleusercontent.com",
-				broker: "https://broker-uoux53xara-uc.a.run.app",
-				auth: "https://auth.staging.zosma.ai",
-				router: "https://router.staging.zosma.ai/v1",
-			}
+		? "staging"
 		: null;
-if (buildConfig) {
-		const actual = {
-			clientId: (process.env.ZOSMA_GOOGLE_CLIENT_ID || "").trim(),
-			broker: (process.env.ZOSMA_OAUTH_BROKER_URL || "").trim(),
-			auth: (process.env.ZOSMA_AUTH_BASE_URL || "").trim(),
-			router: (process.env.ZOSMA_ROUTER_BASE_URL || "").trim(),
-		};
-		for (const key of ["clientId", "broker", "auth", "router"]) {
-			if (actual[key] !== buildConfig[key]) {
-				throw new Error(`${buildConfig.name} build has incorrect ${key} configuration`);
-			}
-		}
-		console.log(`[prebuild] ${buildConfig.name} endpoint configuration validated`);
+
+function requireHttpsBaseUrl(name, value, pathname, rejectStaging) {
+	if (!value) throw new Error(`${name} is required for ${buildMode} builds`);
+	let url;
+	try {
+		url = new URL(value);
+	} catch {
+		throw new Error(`${name} must be a valid URL`);
 	}
+	if (url.protocol !== "https:" || url.pathname !== pathname || url.search || url.hash) {
+		throw new Error(`${name} must be an HTTPS URL with path ${pathname}`);
+	}
+	if (rejectStaging && url.hostname.includes("staging")) {
+		throw new Error(`${name} must not point to staging in a production build`);
+	}
+}
+
+if (buildMode) {
+	const clientId = (process.env.ZOSMA_GOOGLE_CLIENT_ID || "").trim();
+	if (!/^\d+-[a-z0-9-]+\.apps\.googleusercontent\.com$/.test(clientId)) {
+		throw new Error("ZOSMA_GOOGLE_CLIENT_ID must be a valid Google OAuth client id");
+	}
+	const rejectStaging = buildMode === "production";
+	requireHttpsBaseUrl(
+		"ZOSMA_OAUTH_BROKER_URL",
+		(process.env.ZOSMA_OAUTH_BROKER_URL || "").trim(),
+		"/",
+		rejectStaging,
+	);
+	requireHttpsBaseUrl(
+		"ZOSMA_AUTH_BASE_URL",
+		(process.env.ZOSMA_AUTH_BASE_URL || "").trim(),
+		"/",
+		rejectStaging,
+	);
+	requireHttpsBaseUrl(
+		"ZOSMA_ROUTER_BASE_URL",
+		(process.env.ZOSMA_ROUTER_BASE_URL || "").trim(),
+		"/v1",
+		rejectStaging,
+	);
+	console.log(`[prebuild] ${buildMode} endpoint configuration validated from environment`);
+}
 for (const [token, envName] of [
 	["__ZOSMA_GOOGLE_CLIENT_ID__", "ZOSMA_GOOGLE_CLIENT_ID"],
 	["__ZOSMA_OAUTH_BROKER_URL__", "ZOSMA_OAUTH_BROKER_URL"],
