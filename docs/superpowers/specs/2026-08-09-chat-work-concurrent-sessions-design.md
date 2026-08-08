@@ -281,17 +281,64 @@ clear_queue(sessionFile)
 set_model(sessionFile, provider, model)
 ```
 
-Session events use an envelope:
+All envelopes remain JSON Lines on the existing sidecar protocol. `id` correlates a command with its `result`, `error`, and terminal `done` envelope. Session paths are canonical absolute paths, not display labels.
+
+### Wire schemas
+
+The following schemas are the contract between sidecar, Tauri relay, and frontend. Fields marked `?` are omitted when unavailable; arrays are always present when shown.
 
 ```ts
+type WireSessionStatus = "idle" | "thinking" | "tool_call" | "responding" | "error";
+
+interface SessionSnapshot {
+  sessionFile: string;
+  mode: "chat" | "work";
+  cwd?: string;
+  messages: ChatMessage[];
+  isRunning: boolean;
+  status: WireSessionStatus;
+  queue: { steering: string[]; followUp: string[] };
+  model?: { provider?: string; id?: string };
+  error?: { code: string; message: string; retryable: boolean };
+}
+
 interface SessionEventEnvelope {
   type: "event";
   sessionFile: string;
   event: PiEvent;
 }
+
+interface SessionMutationResult {
+  success: true;
+  sessionFile: string;
+}
+
+interface SessionResultEnvelope {
+  type: "result";
+  id: string;
+  sessionFile?: string;
+  data: SessionSnapshot | SessionMutationResult;
+}
+
+type SessionErrorCode =
+  | "session_not_loaded"
+  | "session_load_failed"
+  | "session_busy"
+  | "session_aborted"
+  | "provider_error";
+
+interface SessionErrorEnvelope {
+  type: "error";
+  id: string;
+  sessionFile?: string;
+  code: SessionErrorCode;
+  message: string;
+  retryable: boolean;
+  details?: string;
+}
 ```
 
-`new_session` and `load_session` return a complete frontend snapshot. Commands targeting a missing runtime return a structured `session_not_loaded` error; they must never silently fall back to whichever session was most recently viewed.
+`new_session` and `load_session` always return a complete `SessionSnapshot`; a new empty session uses `messages: []`, `isRunning: false`, `status: "idle"`, and empty queues. Session metadata mutations may return `SessionMutationResult`. A session-bound command targeting a missing runtime returns `session_not_loaded`; it must never silently fall back to whichever session was most recently viewed. `done` is emitted only after the command's side effect and response have completed.
 
 The Tauri relay remains thin. It forwards session identity and emits tagged events without owning session runtime state.
 
@@ -334,6 +381,26 @@ Viewing A ── click B ──→ render cached B state
 ```
 
 Each session serializes its own prompts and steering/follow-up queue. Different sessions may run in parallel. Provider-level rate limiting may affect several sessions externally, but errors and UI state remain associated with the session that received them.
+
+## Responsive Breakpoints
+
+These are layout breakpoints, not feature gates:
+
+- **Wide (`>=1280px` content viewport):** expanded sidebar (`288px`), center Work result, and visible Outputs/Sources rail (`304px`).
+- **Medium (`768–1279px`):** expanded sidebar (`288px`) and center result; Work panel is closed by default and opens as a right drawer no wider than `320px`.
+- **Narrow (`<768px`):** sidebar and Work panel are drawers; only one drawer may be open at a time. The center result and composer remain full width. The Chat/Work switch remains visible in the center header.
+
+The implementation must use CSS media queries/container-safe layout rather than JavaScript viewport checks for static layout. Switching sessions, running streams, selection actions, and queue behavior are identical at every breakpoint. Reduced motion disables drawer and panel transitions.
+
+## Source and Path Normalization
+
+Normalization is used only for identity/deduplication; the original display value is retained for the user.
+
+- **URLs:** parse with `URL`; accept only `http:` and `https:` as persistent Sources. Lowercase the hostname, remove default ports, remove the fragment, and remove a trailing slash except for the root path. Preserve path case, query parameters, and meaningful percent-encoding. Invalid URLs and non-http schemes remain text and are never opened from the Sources rail.
+- **File paths:** the sidecar resolves relative tool paths against that session's `cwd` and emits an absolute normalized path. For frontend comparison, replace `\\` with `/`, preserve a leading UNC `//`, collapse repeated separators after that prefix, uppercase a Windows drive letter, and remove a trailing separator except for `/`, `C:/`, or a UNC share root. Do not lowercase the remaining path because case sensitivity varies by workspace/platform.
+- **Deduplication:** compare normalized URL strings and normalized path strings separately. The newest output/source record owns its display title and metadata; ordering follows first appearance in the session unless the user explicitly sorts later.
+
+Each source/output keeps both `identity` (normalized) and `displayValue` (original) so normalization never changes what the user sees.
 
 ## Error Handling
 
