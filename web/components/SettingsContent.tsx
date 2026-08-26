@@ -10,6 +10,7 @@
  */
 
 import { ModelsConfig } from "./ModelsConfig";
+import type { ZosmaNotice } from "./ZosmaAuthCard";
 import { PluginsConfig } from "./PluginsConfig";
 import { SkillsConfig } from "./SkillsConfig";
 
@@ -25,10 +26,16 @@ function EmbeddedWrapper({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function ModelsContent({ onClose }: { onClose: () => void }) {
+export function ModelsContent({
+  onClose,
+  zosmaNotice,
+}: {
+  onClose: () => void;
+  zosmaNotice?: ZosmaNotice | null;
+}) {
   return (
     <EmbeddedWrapper>
-      <ModelsConfig onClose={onClose} />
+      <ModelsConfig onClose={onClose} zosmaNotice={zosmaNotice} />
     </EmbeddedWrapper>
   );
 }

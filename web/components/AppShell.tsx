@@ -998,6 +998,19 @@ export function AppShell() {
     return () => controller.abort();
   }, [projectTrustCwd]);
 
+  // One-shot Zosma Router landing notice: the callback redirect lands on
+  // /?zosma=success|error — open the Models panel so the result is visible
+  // without hunting for Settings.
+  const [zosmaNotice, setZosmaNotice] = useState(initialNavigation.zosmaNotice);
+  const zosmaNoticeHandled = useRef(false);
+  useEffect(() => {
+    if (zosmaNoticeHandled.current) return;
+    if (!projectTrustCwd || !zosmaNotice) return;
+    zosmaNoticeHandled.current = true;
+    setSettingsInitialCategory("models");
+    setSettingsOpen(true);
+  }, [projectTrustCwd, zosmaNotice]);
+
   const handleTrustProject = useCallback(async () => {
     if (!projectTrustCwd || projectTrustBusy) return;
     setProjectTrustBusy(true);
@@ -2314,7 +2327,11 @@ export function AppShell() {
     </div>
     {settingsOpen && projectTrustCwd && (
       <SettingsShell
-        onClose={() => setSettingsOpen(false)}
+        onClose={() => {
+          setSettingsOpen(false);
+          setZosmaNotice(null);
+        }}
+        zosmaNotice={zosmaNotice}
         cwd={projectTrustCwd}
         sessionId={selectedSession?.id ?? null}
         onReloaded={() => setSessionKey((k) => k + 1)}
