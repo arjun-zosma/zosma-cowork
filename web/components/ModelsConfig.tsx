@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/hooks/useI18n";
+import { ZosmaAuthCard } from "@/components/ZosmaAuthCard";
 import type { ModelCatalogPreset, ModelCatalogRecommendation } from "@/lib/model-catalog";
 import type { DiscoveredModel } from "@/lib/model-discovery";
 import {
@@ -2159,6 +2160,8 @@ export function ModelsConfig({ onClose }: { onClose: () => void }) {
                   </div>
                 );
               })}
+
+              <ZosmaAuthCard onRefresh={refreshAuthProviders} />
 
               {/* Divider before custom providers, only when there are active managed providers */}
               {(activeOAuth.length > 0 || activeApiKey.length > 0) && providers.length > 0 && (
