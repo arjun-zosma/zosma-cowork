@@ -491,7 +491,10 @@ fn check_for_updates(app: tauri::AppHandle) {
             ))
             .title("Zosma Cowork")
             .kind(MessageDialogKind::Info)
-            .buttons(MessageDialogButtons::OkCancelCustom("Install".into(), "Later".into()))
+            .buttons(MessageDialogButtons::OkCancelCustom(
+                "Install".into(),
+                "Later".into(),
+            ))
             .blocking_show();
         if !confirmed {
             return;
@@ -513,7 +516,11 @@ fn check_for_updates(app: tauri::AppHandle) {
                 app.exit(0);
             }
             Err(e) => {
-                show_dialog(&app, MessageDialogKind::Error, &format!("Update failed: {e}"));
+                show_dialog(
+                    &app,
+                    MessageDialogKind::Error,
+                    &format!("Update failed: {e}"),
+                );
             }
         }
     });
@@ -523,6 +530,37 @@ fn check_for_updates(app: tauri::AppHandle) {
 // App entry.
 // ---------------------------------------------------------------------------
 
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    // Per-platform browser opener. The Windows path is load-bearing (ported
+    // from the old sidecar-era shell): the URL MUST be wrapped in double
+    // quotes and appended via `raw_arg` so Rust doesn't re-escape it —
+    // cmd.exe treats `&` as a command separator and would truncate a PKCE
+    // authorization URL at the first `&`.
+    if url != url.trim() || !url.starts_with("http") {
+        return Err("Invalid URL".into());
+    }
+    #[cfg(target_os = "windows")]
+    let result = {
+        use std::os::windows::process::CommandExt;
+        std::process::Command::new("cmd")
+            .args(["/c", "start", ""])
+            .raw_arg(format!("\"{url}\""))
+            .creation_flags(0x0800_0000)
+            .status()
+    };
+    #[cfg(target_os = "macos")]
+    let result = std::process::Command::new("open").arg(&url).status();
+    #[cfg(target_os = "linux")]
+    let result = std::process::Command::new("xdg-open").arg(&url).status();
+
+    let st = result.map_err(|e| format!("open: {e}"))?;
+    if !st.success() {
+        return Err(format!("exit: {st}"));
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -530,6 +568,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_deep_link::init())
         .manage(Arc::new(Shared::default()))
         .setup(|app| {
             let shared = app.state::<Arc<Shared>>().inner().clone();
@@ -572,6 +611,7 @@ pub fn run() {
                 }
             }
         })
+        .invoke_handler(tauri::generate_handler![open_url])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
