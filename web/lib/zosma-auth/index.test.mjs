@@ -10,10 +10,10 @@ const jiti = createJiti(import.meta.url, {
   interopDefault: true,
   moduleCache: false,
 });
-const { startZosmaAuth, ZOSMA_CLIENT_ID } = await jiti.import("./index.ts");
+const { startZosmaAuth, ZOSMA_CLIENT_ID, completeZosmaAuth } = await jiti.import("./index.ts");
 const stateModule = await jiti.import("./state.ts");
 
-async function withPiDir(run) {
+function withPiDir(run) {
   return async () => {
     const dir = await mkdtemp(join(tmpdir(), "zosma-index-"));
     try {
@@ -89,4 +89,134 @@ test("startZosmaAuth throws and clears pending tx when the auth server errors", 
 test("startZosmaAuth throws when authorization_url is missing", withPiDir(async (dir) => {
   const fetch = stubFetch(async () => Response.json({}));
   await assert.rejects(() => startZosmaAuth(dir, { fetch }), /missing authorization_url/);
+}));
+
+const okCatalog = [
+  { id: "m-a", display_name: "Model A", context_window: 1000, max_tokens: 100, reasoning: true, input: ["text", "image"] },
+  { id: "m-b", input_modalities: ["text"] },
+];
+
+function completeFetch() {
+  return stubFetch(async (url) => {
+    if (url.endsWith("/v1/cowork/token")) return Response.json({ access_token: "sk-new-key" });
+    if (url.endsWith("/v1/models")) return Response.json({ data: okCatalog });
+    throw new Error(`unexpected url ${url}`);
+  });
+}
+
+function seedPending(dir, over = {}) {
+  stateModule.savePending(
+    { state: "s1", codeVerifier: "v1", deviceId: "cowork-d1", expiresAt: Date.now() + 600_000, ...over },
+    dir,
+  );
+}
+
+const recordingDeps = () => {
+  const calls = { reload: 0, available: [] };
+  const deps = {
+    reload: async () => { calls.reload += 1; },
+    getAvailable: async (providerId) => {
+      calls.available.push(providerId);
+      return [{ id: "m-a", provider: providerId }, { id: "m-b", provider: providerId }];
+    },
+    fetch: completeFetch(),
+  };
+  return { calls, deps };
+};
+
+test("completeZosmaAuth: happy path saves provider, reloads, verifies, returns result", withPiDir(async (dir) => {
+  seedPending(dir);
+  const { calls, deps } = recordingDeps();
+  const res = await completeZosmaAuth("code1", "s1", dir, deps);
+  assert.deepEqual(res, { providerId: "zosma-router", selectedModelId: "m-a", modelCount: 2 });
+  assert.equal(calls.reload, 1);
+  assert.deepEqual(calls.available, ["zosma-router"]);
+
+  const models = JSON.parse(await readFile(join(dir, "models.json"), "utf-8"));
+  const prov = models.providers["zosma-router"];
+  assert.equal(prov.apiKey, "sk-new-key");
+  assert.equal(prov.baseUrl, "https://router.zosma.ai/v1");
+  assert.equal(prov.api, "openai-completions");
+  assert.deepEqual(prov.models, [
+    { id: "m-a", name: "Model A", contextWindow: 1000, maxTokens: 100, reasoning: true, input: ["text", "image"] },
+    { id: "m-b", name: "m-b", reasoning: false, input: ["text"] },
+  ]);
+  // pending tx consumed
+  assert.equal(await fileExists(join(dir, "zosma-auth-pending.json")), false);
+}));
+
+test("completeZosmaAuth: missing code or state throws", withPiDir(async (dir) => {
+  seedPending(dir);
+  const { deps } = recordingDeps();
+  await assert.rejects(() => completeZosmaAuth("", "s1", dir, deps), /missing code or state/);
+  await assert.rejects(() => completeZosmaAuth("c", "", dir, deps), /missing code or state/);
+}));
+
+test("completeZosmaAuth: no pending transaction throws", withPiDir(async (dir) => {
+  const { deps } = recordingDeps();
+  await assert.rejects(
+    () => completeZosmaAuth("code1", "s1", dir, deps),
+    /no pending auth transaction/,
+  );
+}));
+
+test("completeZosmaAuth: state mismatch deletes pending tx and throws", withPiDir(async (dir) => {
+  seedPending(dir);
+  const { deps } = recordingDeps();
+  await assert.rejects(() => completeZosmaAuth("code1", "WRONG", dir, deps), /state mismatch/);
+  assert.equal(await fileExists(join(dir, "zosma-auth-pending.json")), false);
+}));
+
+test("completeZosmaAuth: token exchange 401 maps to friendly error", withPiDir(async (dir) => {
+  seedPending(dir);
+  const deps = {
+    reload: async () => {},
+    getAvailable: async () => [],
+    fetch: stubFetch(async () => new Response("unauthorized", { status: 401 })),
+  };
+  await assert.rejects(() => completeZosmaAuth("code1", "s1", dir, deps), /code expired or already used/);
+}));
+
+test("completeZosmaAuth: empty catalog throws and saves nothing", withPiDir(async (dir) => {
+  seedPending(dir);
+  const deps = {
+    reload: async () => {},
+    getAvailable: async () => [],
+    fetch: stubFetch(async (url) => {
+      if (url.endsWith("/v1/cowork/token")) return Response.json({ access_token: "sk-x" });
+      return Response.json({ data: [] });
+    }),
+  };
+  await assert.rejects(() => completeZosmaAuth("code1", "s1", dir, deps), /no models entitled/);
+  assert.equal(await fileExists(join(dir, "models.json")), false);
+}));
+
+test("completeZosmaAuth: verification failure rolls back the previous provider", withPiDir(async (dir) => {
+  // Pre-existing provider entry that must survive the failed attempt.
+  const { writeFile } = await import("node:fs/promises");
+  await writeFile(
+    join(dir, "models.json"),
+    JSON.stringify({ providers: { "zosma-router": { id: "zosma-router", name: "Old", apiKey: "sk-old", models: [] } } }),
+  );
+  seedPending(dir);
+  const deps = {
+    reload: async () => {},
+    getAvailable: async () => [{ id: "only-a", provider: "zosma-router" }], // m-b missing -> verify fails
+    fetch: completeFetch(),
+  };
+  await assert.rejects(() => completeZosmaAuth("code1", "s1", dir, deps), /not found in registry/);
+  const models = JSON.parse(await readFile(join(dir, "models.json"), "utf-8"));
+  assert.equal(models.providers["zosma-router"].apiKey, "sk-old");
+}));
+
+test("completeZosmaAuth: verify failure with no previous provider deletes the new one", withPiDir(async (dir) => {
+  seedPending(dir);
+  const deps = {
+    reload: async () => {},
+    getAvailable: async () => [],
+    fetch: completeFetch(),
+  };
+  await assert.rejects(() => completeZosmaAuth("code1", "s1", dir, deps), /not found in registry/);
+  const models = JSON.parse(await readFile(join(dir, "models.json"), "utf-8"));
+  assert.equal(models.providers["zosma-router"], undefined);
 }));

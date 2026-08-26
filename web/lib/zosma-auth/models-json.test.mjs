@@ -19,7 +19,7 @@ const {
   readProviderEntry,
 } = await jiti.import("./models-json.ts");
 
-async function withModelsFile(initial, run) {
+function withModelsFile(initial, run) {
   return async () => {
     const dir = await mkdtemp(join(tmpdir(), "zosma-models-"));
     const modelsPath = join(dir, "models.json");

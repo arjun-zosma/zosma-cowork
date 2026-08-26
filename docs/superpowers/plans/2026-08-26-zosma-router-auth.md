@@ -55,6 +55,7 @@ const jiti = createJiti(import.meta.url, {
 });
 ```
 
+- **Test-wrapper pitfall (learned in TDD):** a helper like `withXDir(run)` must be a PLAIN function that RETURNS the test function (`return async () => { ... }`). If it is `async function withXDir(run) { await ... }`, the call produces a Promise, node:test just resolves it, and the test body silently never runs (hollow green).
 - Tests that hit the real agent dir point `process.env.PI_CODING_AGENT_DIR` at a fresh temp dir **before** invoking the code under test (`getAgentDir()` from `@earendil-works/pi-coding-agent` reads `PI_CODING_AGENT_DIR` at call time — verified in its `dist/config.js`: `ENV_AGENT_DIR = PI_CODING_AGENT_DIR`).
 - Conventional commit per task: `feat(zosma-auth): ...` / `test(zosma-auth): ...` / `chore(tauri): ...`.
 - TDD iron law: failing test first, watch it fail, minimal implementation, watch it pass, commit.
@@ -816,17 +817,19 @@ const {
   readProviderEntry,
 } = await jiti.import("./models-json.ts");
 
-async function withModelsFile(initial, run) {
-  const dir = await mkdtemp(join(tmpdir(), "zosma-models-"));
-  const modelsPath = join(dir, "models.json");
-  if (initial !== undefined) {
-    await writeFile(modelsPath, JSON.stringify(initial, null, 2));
-  }
-  try {
-    await run(modelsPath, dir);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
+function withModelsFile(initial, run) {
+  return async () => {
+    const dir = await mkdtemp(join(tmpdir(), "zosma-models-"));
+    const modelsPath = join(dir, "models.json");
+    if (initial !== undefined) {
+      await writeFile(modelsPath, JSON.stringify(initial, null, 2));
+    }
+    try {
+      await run(modelsPath, dir);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  };
 }
 
 const entry = {
@@ -1043,13 +1046,15 @@ const jiti = createJiti(import.meta.url, {
 const { startZosmaAuth, ZOSMA_CLIENT_ID } = await jiti.import("./index.ts");
 const stateModule = await jiti.import("./state.ts");
 
-async function withPiDir(run) {
-  const dir = await mkdtemp(join(tmpdir(), "zosma-index-"));
-  try {
-    await run(dir);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
+function withPiDir(run) {
+  return async () => {
+    const dir = await mkdtemp(join(tmpdir(), "zosma-index-"));
+    try {
+      await run(dir);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  };
 }
 
 function stubFetch(handler) {
@@ -1318,7 +1323,7 @@ console.log('models sample:', p?.models?.slice(0, 1));
 "
 ```
 
-Record the exact field holding model ids (expected: `p.models[].id`). If the shape differs from the code in Task 7's `productionDeps`, adjust that function accordingly — everything else in this task is unaffected.
+Record the exact accessor for model ids. **Probed 2026-08-26:** `rt.getProvider('zosma-router')` has NO `models` property — models come from the `getModels()` method (returns 27 objects with `.id` on this machine). Task 7's `productionDeps` is written accordingly; re-probe if the pi SDK changes the shape.
 
 - [ ] **Step 2: Add failing tests**
 
@@ -1856,7 +1861,7 @@ export function productionDeps(): ZosmaAuthDeps {
       const runtime = await ModelRuntime.create();
       const provider = runtime.getProvider(providerId);
       if (!provider) return [];
-      const models = provider.models ?? [];
+      const models = provider.getModels?.() ?? [];
       return models.map((m) => ({ id: m.id, provider: providerId }));
     },
   };

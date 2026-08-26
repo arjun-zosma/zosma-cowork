@@ -27,7 +27,7 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { generateCodeVerifier, generateState, sha256Base64url } from "./crypto";
 import { deletePending, loadPending, savePending } from "./state";
 import { resolveRouterConfig } from "./router-config";
-import { ZOSMA_PROVIDER_ID } from "./models-json";
+import { ZOSMA_PROVIDER_ID, readProviderEntry, restoreProvider, snapshotProvider, upsertProvider } from "./models-json";
 
 export const ZOSMA_CLIENT_ID = "zosma-cowork";
 export const DEVICE_ID_FILE = "zosma-device-id.txt";
@@ -156,4 +156,185 @@ export async function startZosmaAuth(
  */
 export function zosmaPiDir(): string {
   return getAgentDir();
+}
+
+type ModelInput = "text" | "image";
+
+interface MappedModel {
+  id: string;
+  name: string;
+  contextWindow?: number;
+  maxTokens?: number;
+  reasoning: boolean;
+  input?: ModelInput[];
+}
+
+/**
+ * Map router model row input capabilities to pi's `input` shape.
+ */
+function mapInputCapability(row: Record<string, unknown>): ModelInput[] | undefined {
+  if (Array.isArray(row.input)) {
+    const filtered = row.input.filter(
+      (v: unknown): v is ModelInput => v === "text" || v === "image",
+    );
+    if (filtered.length > 0) return filtered;
+  }
+  if (Array.isArray(row.input_modalities)) {
+    const hasImage = row.input_modalities.some(
+      (m: unknown) =>
+        typeof m === "string" && (m === "image" || m === "vision" || m === "image_url"),
+    );
+    return hasImage ? ["text", "image"] : ["text"];
+  }
+  return undefined;
+}
+
+function mapCatalogRows(rows: Array<Record<string, unknown>>): MappedModel[] {
+  return rows.map((r) => ({
+    id: String(r.id),
+    name: r.display_name ? String(r.display_name) : String(r.id),
+    contextWindow:
+      typeof r.context_window === "number"
+        ? r.context_window
+        : typeof r.contextWindow === "number"
+          ? r.contextWindow
+          : undefined,
+    maxTokens:
+      typeof r.max_tokens === "number"
+        ? r.max_tokens
+        : typeof r.maxTokens === "number"
+          ? r.maxTokens
+          : undefined,
+    reasoning: Boolean(r.reasoning),
+    input: mapInputCapability(r),
+  }));
+}
+
+/**
+ * Shared save → reload → verify → rollback tail, used by completeZosmaAuth
+ * here and by refreshZosmaModels / authenticateWithKey (Task 7).
+ */
+async function saveCatalogAndVerify(
+  models: MappedModel[],
+  apiKey: string,
+  piDir: string,
+  deps: ZosmaAuthDeps,
+  name: string,
+  api: string,
+): Promise<CompleteAuthResult> {
+  const config = resolveRouterConfig(piDir);
+  const modelsPath = join(piDir, "models.json");
+  const prior = snapshotProvider(modelsPath, ZOSMA_PROVIDER_ID);
+  try {
+    upsertProvider(modelsPath, ZOSMA_PROVIDER_ID, {
+      id: ZOSMA_PROVIDER_ID,
+      name,
+      baseUrl: config.routerBaseUrl,
+      apiKey,
+      api,
+      models: models.map((m) => ({ ...m })),
+    });
+    await deps.reload();
+    const available = await deps.getAvailable(ZOSMA_PROVIDER_ID);
+    const registered = new Set(available.map((m) => m.id));
+    for (const m of models) {
+      if (!registered.has(m.id)) {
+        throw new Error(`model ${m.id} not found in registry after reload`);
+      }
+    }
+  } catch (err) {
+    restoreProvider(modelsPath, ZOSMA_PROVIDER_ID, prior);
+    try {
+      await deps.reload();
+    } catch {
+      // Re-init after rollback failed — leave it, the user can retry.
+    }
+    throw err;
+  }
+  return {
+    providerId: ZOSMA_PROVIDER_ID,
+    selectedModelId: models[0].id,
+    modelCount: models.length,
+  };
+}
+
+/**
+ * Complete the Zosma Router auth flow after the browser returns code+state.
+ *
+ * 1. Validate inputs
+ * 2. Load pending tx, verify state match
+ * 3. Exchange code + PKCE verifier for the router key
+ * 4. Fetch the authenticated model catalog
+ * 5. Map rows to the pi model shape
+ * 6. Save + reload + verify (+ rollback) via saveCatalogAndVerify
+ * 7. Delete pending tx
+ */
+export async function completeZosmaAuth(
+  code: string,
+  state: string,
+  piDir: string,
+  deps: ZosmaAuthDeps,
+): Promise<CompleteAuthResult> {
+  const config = resolveRouterConfig(piDir);
+
+  if (!code || !state) throw new Error("missing code or state");
+
+  const tx = loadPending(piDir);
+  if (!tx) throw new Error("no pending auth transaction (expired or never started)");
+  if (tx.state !== state) {
+    deletePending(piDir);
+    throw new Error("state mismatch — possible CSRF");
+  }
+
+  const tokenRes = await fetchImpl(deps)(`${config.authBaseUrl}/v1/cowork/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      client_id: ZOSMA_CLIENT_ID,
+      code,
+      code_verifier: tx.codeVerifier,
+      device_id: tx.deviceId,
+    }),
+    redirect: "error",
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+
+  if (!tokenRes.ok) {
+    deletePending(piDir);
+    const msg =
+      tokenRes.status === 401
+        ? "code expired or already used"
+        : `token exchange returned ${tokenRes.status}`;
+    throw new Error(msg);
+  }
+
+  const tokenBody = (await tokenRes.json()) as { access_token?: string };
+  const routerKey = tokenBody.access_token;
+  if (!routerKey) {
+    deletePending(piDir);
+    throw new Error("token response missing access_token");
+  }
+
+  const modelsRes = await fetchImpl(deps)(`${config.authBaseUrl}/v1/models`, {
+    headers: { Authorization: `Bearer ${routerKey}` },
+    redirect: "error",
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+
+  if (!modelsRes.ok) {
+    deletePending(piDir);
+    throw new Error(`model catalog returned ${modelsRes.status}`);
+  }
+
+  const catalogBody = (await modelsRes.json()) as { data?: unknown[] };
+  const rows = (catalogBody.data ?? []) as Array<Record<string, unknown>>;
+  if (rows.length === 0) {
+    deletePending(piDir);
+    throw new Error("no models entitled for this account");
+  }
+
+  const models = mapCatalogRows(rows);
+  const result = await saveCatalogAndVerify(models, routerKey, piDir, deps, "Zosma AI", "openai-completions");
+  deletePending(piDir);
+  return result;
 }
