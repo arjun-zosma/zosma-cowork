@@ -36,7 +36,7 @@ test("POST /api-key saves the key and returns the result", withAgentDir(async (d
   assert.equal(models.providers["zosma-router"].apiKey, "sk-pasted");
 }));
 
-test("POST /api-key rejects an empty key with 400", withAgentDir(async (_dir) => {
+test("POST /api-key rejects an empty key with 400", withAgentDir(async () => {
   const res = await POST(
     new Request("http://localhost/api/auth/zosma/api-key", {
       method: "POST",

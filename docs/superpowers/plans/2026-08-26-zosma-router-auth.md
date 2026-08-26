@@ -984,7 +984,8 @@ export function restoreProvider(
   const data = readModelsConfig(modelsPath);
   const providers = providersOf(data);
   if (snapshot === null) {
-    const { [providerId]: _removed, ...rest } = providers;
+    const rest = { ...providers };
+    delete rest[providerId];
     data.providers = rest;
   } else {
     data.providers = { ...providers, [providerId]: snapshot };
@@ -2686,7 +2687,7 @@ test("POST /api-key saves the key and returns the result", withAgentDir(async (d
   assert.equal(models.providers["zosma-router"].apiKey, "sk-pasted");
 }));
 
-test("POST /api-key rejects an empty key with 400", withAgentDir(async (_dir) => {
+test("POST /api-key rejects an empty key with 400", withAgentDir(async () => {
   const res = await POST(
     new Request("http://localhost/api/auth/zosma/api-key", {
       method: "POST",
@@ -3230,7 +3231,7 @@ git commit -m "feat(zosma-auth): fetch-based useZosmaAuth hook with manual-paste
 
 - [ ] **Step 1: Write the failing test**
 
-`web/components/ZosmaAuthCard.test.mjs` (server-side render smoke — `useEffect` does not run during `renderToString`, so no fetch happens and no mocking is needed):
+`web/components/ZosmaAuthCard.test.mjs` (server-side render smoke — `useEffect` does not run during `renderToString`, so no fetch happens and no mocking is needed). Note the `jsx` jiti option — required to parse the .tsx component (app idiom, see ChatInput.test.mjs):
 
 ```js
 import assert from "node:assert/strict";
@@ -3240,9 +3241,8 @@ import { renderToString } from "react-dom/server";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url, {
-  alias: { "@": process.cwd() },
-  interopDefault: true,
-  moduleCache: false,
+  jsx: { runtime: "automatic" },
+  tsconfigPaths: true,
 });
 const { ZosmaAuthCard } = await jiti.import("./ZosmaAuthCard.tsx");
 

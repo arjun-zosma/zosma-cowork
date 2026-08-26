@@ -66,7 +66,8 @@ export function restoreProvider(
   const data = readModelsConfig(modelsPath);
   const providers = providersOf(data);
   if (snapshot === null) {
-    const { [providerId]: _removed, ...rest } = providers;
+    const rest = { ...providers };
+    delete rest[providerId];
     data.providers = rest;
   } else {
     data.providers = { ...providers, [providerId]: snapshot };
