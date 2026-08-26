@@ -2430,7 +2430,7 @@ const jiti = createJiti(import.meta.url, {
   moduleCache: false,
 });
 const { POST } = await jiti.import("./route.ts");
-const stateModule = await jiti.import("../../../../lib/zosma-auth/state.ts");
+const stateModule = await jiti.import("../../../../../lib/zosma-auth/state.ts");
 
 function seedPending(dir) {
   stateModule.savePending(
@@ -2529,7 +2529,7 @@ const jiti = createJiti(import.meta.url, {
   moduleCache: false,
 });
 const { GET } = await jiti.import("./route.ts");
-const stateModule = await jiti.import("../../../../lib/zosma-auth/state.ts");
+const stateModule = await jiti.import("../../../../../lib/zosma-auth/state.ts");
 
 function seedPending(dir, state = "s1") {
   stateModule.savePending(
@@ -2717,11 +2717,11 @@ export const dynamic = "force-dynamic";
 export async function POST(req: Request) {
   let body: { code?: string; state?: string };
   try {
-    body = await req.json();
+    body = (await req.json()) as { code?: string; state?: string };
   } catch {
     return Response.json({ error: "code and state required" }, { status: 400 });
   }
-  if (!body?.code || !body?.state) {
+  if (typeof body?.code !== "string" || typeof body?.state !== "string") {
     return Response.json({ error: "code and state required" }, { status: 400 });
   }
   try {
@@ -2811,11 +2811,11 @@ export const dynamic = "force-dynamic";
 export async function POST(req: Request) {
   let body: { apiKey?: string };
   try {
-    body = await req.json();
+    body = (await req.json()) as { apiKey?: string };
   } catch {
     return Response.json({ error: "apiKey required" }, { status: 400 });
   }
-  if (!body?.apiKey) {
+  if (typeof body?.apiKey !== "string") {
     return Response.json({ error: "apiKey required" }, { status: 400 });
   }
   try {
