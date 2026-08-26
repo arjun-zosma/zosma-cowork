@@ -22,6 +22,14 @@ const nextConfig: NextConfig = {
     "@earendil-works/pi-tui",
   ],
   allowedDevOrigins: ["127.0.0.1", "192.168.*.*"],
+  webpack: (config, { isServer }) => {
+  if (isServer) {
+    const existing = config.externals ?? [];
+    const list = Array.isArray(existing) ? existing : [existing];
+    config.externals = [...list, { undici: 'commonjs undici' }];
+  }
+  return config;
+},
   async headers() {
     return [
       {
