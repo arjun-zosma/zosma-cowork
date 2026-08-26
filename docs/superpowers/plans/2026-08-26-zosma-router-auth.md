@@ -79,6 +79,7 @@ const jiti = createJiti(import.meta.url, {
 | `web/app/api/auth/zosma/disconnect/route.ts` | `POST` → revoke + remove provider |
 | `web/app/api/auth/zosma/cancel/route.ts` | `POST` → delete pending tx only |
 | `web/app/api/auth/zosma/refresh/route.ts` | `POST` → re-fetch catalog with existing key |
+| `web/app/api/auth/zosma/api-key/route.ts` | `POST` → degraded sign-in: save pasted router key + verify (Task 0 finding) |
 | `web/app/api/auth/zosma/config/route.ts` | `PUT` → persist custom base URLs |
 | `web/app/api/auth/zosma/test-helper.mjs` | Shared `withAgentDir` test wrapper (temp `PI_CODING_AGENT_DIR` + `t.after` cleanup). |
 | `web/hooks/useZosmaAuth.ts` | Client state machine (`idle|starting|waiting_browser|completing|done|error`), browser open, Tauri deep-link listener, manual code parse. |
@@ -150,6 +151,14 @@ Answer these three questions from the response:
 | Server honors `redirect_uri` | "Sign in in your browser" — loopback callback, no manual step |
 | Server deep-links only | Desktop: "Complete sign-in in your browser" (deep link). Browser: show the manual-paste field up front |
 | Server shows a code page | Manual paste is the universal path; deep link is a bonus |
+
+**Findings (probed 2026-08-26 against production):**
+
+1. `POST https://router.zosma.ai/v1/cowork/authorizations` → **404** `{"detail": "Not Found"}`.
+2. Production is a **LiteLLM proxy** (OpenAPI: 507 paths, standard LiteLLM route set). It has **no** `/v1/cowork/*`, device, or authorization routes. The PKCE endpoints exist on the **dev router** only — this machine's `~/.pi/agent/zosma-router-config.json` points at `http://localhost:3000` (dev server, not currently running).
+3. `GET https://router.zosma.ai/v1/models` → **200** (catalog path is live in production; the existing `sk-…` key in `models.json` still resolves 27 models). The `/v1/cowork/*` endpoints are expected to land in production eventually — when they do, no code change is needed (base URLs are config-driven).
+
+**Revised decision:** loopback callback remains the primary PKCE UX (it works against the dev router, and against production once the endpoints ship). Because production 404s today, the card **also** offers the degraded path that works now: **"Paste your router key"** — saves the key, fetches the catalog with it, verifies, rolls back on failure (Task 7 adds `authenticateWithKey`, Task 9 adds `POST /api/auth/zosma/api-key`, Task 11 adds the card field). A 404/5xx from the auth server in the PKCE `start` path surfaces the key-paste field instead of a dead end.
 
 Cleanup: `rm /tmp/zosma-probe.mjs`. (The probe created a server-side transaction that simply expires; no local files are touched.)
 
@@ -1587,21 +1596,36 @@ export async function completeZosmaAuth(
   }
 
   const models = mapCatalogRows(rows);
+  const result = await saveCatalogAndVerify(models, routerKey, piDir, deps, "Zosma AI", "openai-completions");
+  deletePending(piDir);
+  return result;
+}
+
+/**
+ * Shared save → reload → verify → rollback tail, used by completeZosmaAuth
+ * here and by refreshZosmaModels / authenticateWithKey (Task 7).
+ */
+async function saveCatalogAndVerify(
+  models: MappedModel[],
+  apiKey: string,
+  piDir: string,
+  deps: ZosmaAuthDeps,
+  name: string,
+  api: string,
+): Promise<CompleteAuthResult> {
+  const config = resolveRouterConfig(piDir);
   const modelsPath = join(piDir, "models.json");
   const prior = snapshotProvider(modelsPath, ZOSMA_PROVIDER_ID);
-
   try {
     upsertProvider(modelsPath, ZOSMA_PROVIDER_ID, {
       id: ZOSMA_PROVIDER_ID,
-      name: "Zosma AI",
+      name,
       baseUrl: config.routerBaseUrl,
-      apiKey: routerKey,
-      api: "openai-completions",
+      apiKey,
+      api,
       models: models.map((m) => ({ ...m })),
     });
-
     await deps.reload();
-
     const available = await deps.getAvailable(ZOSMA_PROVIDER_ID);
     const registered = new Set(available.map((m) => m.id));
     for (const m of models) {
@@ -1618,9 +1642,6 @@ export async function completeZosmaAuth(
     }
     throw err;
   }
-
-  deletePending(piDir);
-
   return {
     providerId: ZOSMA_PROVIDER_ID,
     selectedModelId: models[0].id,
@@ -1651,7 +1672,7 @@ git commit -m "feat(zosma-auth): completeZosmaAuth with catalog fetch, verify an
 
 - [ ] **Step 1: Add failing tests**
 
-Extend the top-of-file `./index.ts` destructure with `disconnectZosmaAuth, cancelZosmaAuth, refreshZosmaModels, getZosmaStatus`. Append to `web/lib/zosma-auth/index.test.mjs`:
+Extend the top-of-file `./index.ts` destructure with `disconnectZosmaAuth, cancelZosmaAuth, refreshZosmaModels, getZosmaStatus, authenticateWithKey`. Append to `web/lib/zosma-auth/index.test.mjs`:
 
 ```js
 test("disconnectZosmaAuth revokes server-side, deletes provider, reloads", withPiDir(async (dir) => {
@@ -1757,6 +1778,36 @@ test("getZosmaStatus is clean when nothing is set up", withPiDir(async (dir) => 
     authBaseUrl: "https://router.zosma.ai",
     routerBaseUrl: "https://router.zosma.ai/v1",
   });
+}));
+
+test("authenticateWithKey saves a fresh key and its catalog", withPiDir(async (dir) => {
+  const deps = {
+    reload: async () => {},
+    getAvailable: async (pid) => [{ id: "k1", provider: pid }],
+    fetch: stubFetch(async (url) => {
+      if (!String(url).endsWith("/v1/models")) throw new Error(`unexpected ${url}`);
+      return Response.json({ data: [{ id: "k1", display_name: "K1" }] });
+    }),
+  };
+  const res = await authenticateWithKey("  sk-pasted  ", dir, deps);
+  assert.deepEqual(res, { providerId: "zosma-router", selectedModelId: "k1", modelCount: 1 });
+  const models = JSON.parse(await readFile(join(dir, "models.json"), "utf-8"));
+  assert.equal(models.providers["zosma-router"].apiKey, "sk-pasted");
+}));
+
+test("authenticateWithKey rolls back on verification failure", withPiDir(async (dir) => {
+  const { writeFile } = await import("node:fs/promises");
+  await writeFile(join(dir, "models.json"), JSON.stringify({
+    providers: { "zosma-router": { id: "zosma-router", name: "Old", apiKey: "sk-old", models: [] } },
+  }));
+  const deps = {
+    reload: async () => {},
+    getAvailable: async () => [],
+    fetch: stubFetch(async () => Response.json({ data: [{ id: "k1" }] })),
+  };
+  await assert.rejects(() => authenticateWithKey("sk-new", dir, deps), /not found in registry/);
+  const models = JSON.parse(await readFile(join(dir, "models.json"), "utf-8"));
+  assert.equal(models.providers["zosma-router"].apiKey, "sk-old");
 }));
 ```
 
@@ -1876,35 +1927,52 @@ export async function refreshZosmaModels(
   if (rows.length === 0) throw new Error("no models entitled for this account");
 
   const models = mapCatalogRows(rows);
-  const prior = snapshotProvider(modelsPath, ZOSMA_PROVIDER_ID);
-  try {
-    upsertProvider(modelsPath, ZOSMA_PROVIDER_ID, {
-      id: ZOSMA_PROVIDER_ID,
-      name: provider.name ?? "Zosma AI",
-      baseUrl: config.routerBaseUrl,
-      apiKey: provider.apiKey,
-      api: provider.api ?? "openai-completions",
-      models: models.map((m) => ({ ...m })),
-    });
-    await deps.reload();
-    const available = await deps.getAvailable(ZOSMA_PROVIDER_ID);
-    const registered = new Set(available.map((m) => m.id));
-    for (const m of models) {
-      if (!registered.has(m.id)) {
-        throw new Error(`model ${m.id} not found in registry after reload`);
-      }
-    }
-  } catch (err) {
-    restoreProvider(modelsPath, ZOSMA_PROVIDER_ID, prior);
-    try {
-      await deps.reload();
-    } catch {
-      // Best-effort, as in completeZosmaAuth.
-    }
-    throw err;
-  }
+  const result = await saveCatalogAndVerify(
+    models,
+    provider.apiKey,
+    piDir,
+    deps,
+    provider.name ?? "Zosma AI",
+    provider.api ?? "openai-completions",
+  );
+  return { modelCount: result.modelCount, selectedModelId: result.selectedModelId };
+}
 
-  return { modelCount: models.length, selectedModelId: models[0].id };
+/**
+ * Degraded sign-in for environments where the PKCE endpoints are not
+ * deployed (Task 0 finding: production LiteLLM proxy has no /v1/cowork/*):
+ * take a router key directly, fetch the catalog with it, save + verify.
+ */
+export async function authenticateWithKey(
+  apiKey: string,
+  piDir: string,
+  deps: ZosmaAuthDeps,
+): Promise<CompleteAuthResult> {
+  const config = resolveRouterConfig(piDir);
+  const key = apiKey.trim();
+  if (!key) throw new Error("missing API key");
+
+  const modelsRes = await fetchImpl(deps)(`${config.authBaseUrl}/v1/models`, {
+    headers: { Authorization: `Bearer ${key}` },
+    redirect: "error",
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  if (!modelsRes.ok) throw new Error(`model catalog returned ${modelsRes.status}`);
+
+  const catalogBody = (await modelsRes.json()) as { data?: unknown[] };
+  const rows = (catalogBody.data ?? []) as Array<Record<string, unknown>>;
+  if (rows.length === 0) throw new Error("no models entitled for this account");
+
+  const models = mapCatalogRows(rows);
+  const existing = readProviderEntry(join(piDir, "models.json"), ZOSMA_PROVIDER_ID);
+  return saveCatalogAndVerify(
+    models,
+    key,
+    piDir,
+    deps,
+    existing?.name ?? "Zosma AI",
+    existing?.api ?? "openai-completions",
+  );
 }
 
 /**
@@ -1933,7 +2001,7 @@ Expected: 20 pass, 0 fail.
 - [ ] **Step 5: Run the whole zosma-auth lib suite**
 
 Run: `cd web && node --experimental-strip-types --test "lib/zosma-auth/*.test.mjs"`
-Expected: all pass (54 tests across 5 files: 7+9+10+8+20).
+Expected: all pass (56 tests across 5 files: 7+9+10+8+22).
 
 - [ ] **Step 6: Commit**
 
@@ -2324,9 +2392,11 @@ git commit -m "feat(zosma-auth): start/status/disconnect/cancel/config routes"
 - Create: `web/app/api/auth/zosma/complete/route.ts`
 - Create: `web/app/api/auth/zosma/callback/route.ts`
 - Create: `web/app/api/auth/zosma/refresh/route.ts`
+- Create: `web/app/api/auth/zosma/api-key/route.ts`
 - Test: `web/app/api/auth/zosma/complete/route.test.mjs`
 - Test: `web/app/api/auth/zosma/callback/route.test.mjs`
 - Test: `web/app/api/auth/zosma/refresh/route.test.mjs`
+- Test: `web/app/api/auth/zosma/api-key/route.test.mjs`
 
 These routes run the full flow, whose production wiring touches the real `ModelRuntime` and network. To keep the tests deterministic, they use the `globalThis.__zosmaAuthDepsForTests` seam added in Task 7 (`resolveDeps()`). Tests set the override and clean it up in `t.after`.
 
@@ -2561,6 +2631,59 @@ test("POST /refresh is 400 when not configured", withAgentDir(async (_dir, t) =>
 }));
 ```
 
+`web/app/api/auth/zosma/api-key/route.test.mjs`:
+
+```js
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import test from "node:test";
+import { createJiti } from "jiti";
+import { withAgentDir } from "../test-helper.mjs";
+
+const jiti = createJiti(import.meta.url, {
+  alias: { "@": process.cwd() },
+  interopDefault: true,
+  moduleCache: false,
+});
+const { POST } = await jiti.import("./route.ts");
+
+test("POST /api-key saves the key and returns the result", withAgentDir(async (dir, t) => {
+  globalThis.__zosmaAuthDepsForTests = {
+    reload: async () => {},
+    getAvailable: async (pid) => [{ id: "k1", provider: pid }],
+  };
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => Response.json({ data: [{ id: "k1" }] });
+  t.after(() => {
+    delete globalThis.__zosmaAuthDepsForTests;
+    globalThis.fetch = realFetch;
+  });
+  const res = await POST(
+    new Request("http://localhost/api/auth/zosma/api-key", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ apiKey: "sk-pasted" }),
+    }),
+  );
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).providerId, "zosma-router");
+  const models = JSON.parse(await readFile(join(dir, "models.json"), "utf-8"));
+  assert.equal(models.providers["zosma-router"].apiKey, "sk-pasted");
+}));
+
+test("POST /api-key rejects an empty key with 400", withAgentDir(async (_dir) => {
+  const res = await POST(
+    new Request("http://localhost/api/auth/zosma/api-key", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    }),
+  );
+  assert.equal(res.status, 400);
+}));
+```
+
 - [ ] **Step 2: Watch it fail**
 
 Run: `cd web && node --experimental-strip-types --test app/api/auth/zosma/complete/route.test.mjs app/api/auth/zosma/callback/route.test.mjs app/api/auth/zosma/refresh/route.test.mjs`
@@ -2661,15 +2784,46 @@ export async function POST() {
 }
 ```
 
+`web/app/api/auth/zosma/api-key/route.ts`:
+
+```ts
+import { authenticateWithKey, resolveDeps, zosmaPiDir } from "@/lib/zosma-auth";
+
+export const dynamic = "force-dynamic";
+
+// POST /api/auth/zosma/api-key — degraded sign-in: paste a router key
+// directly. Works even where the /v1/cowork/* PKCE endpoints are not
+// deployed (Task 0 finding: production LiteLLM proxy has none).
+export async function POST(req: Request) {
+  let body: { apiKey?: string };
+  try {
+    body = await req.json();
+  } catch {
+    return Response.json({ error: "apiKey required" }, { status: 400 });
+  }
+  if (!body?.apiKey) {
+    return Response.json({ error: "apiKey required" }, { status: 400 });
+  }
+  try {
+    const result = await authenticateWithKey(body.apiKey, zosmaPiDir(), resolveDeps());
+    return Response.json(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "failed to save API key";
+    const status = message === "missing API key" ? 400 : 502;
+    return Response.json({ error: message }, { status });
+  }
+}
+```
+
 - [ ] **Step 4: Watch it pass**
 
-Run: `cd web && node --experimental-strip-types --test app/api/auth/zosma/complete/route.test.mjs app/api/auth/zosma/callback/route.test.mjs app/api/auth/zosma/refresh/route.test.mjs`
-Expected: 9 pass, 0 fail.
+Run: `cd web && node --experimental-strip-types --test app/api/auth/zosma/complete/route.test.mjs app/api/auth/zosma/callback/route.test.mjs app/api/auth/zosma/refresh/route.test.mjs app/api/auth/zosma/api-key/route.test.mjs`
+Expected: 11 pass, 0 fail.
 
 - [ ] **Step 5: Re-run all zosma route tests together**
 
 Run: `cd web && node --experimental-strip-types --test app/api/auth/zosma/*/route.test.mjs`
-Expected: all pass (19 tests).
+Expected: all pass (21 tests).
 
 - [ ] **Step 6: Commit**
 
@@ -3211,6 +3365,7 @@ export function ZosmaAuthCard({ onRefresh, notice: noticeProp }: Props) {
   const [advancedRouterUrl, setAdvancedRouterUrl] = useState("");
   const [savedConfig, setSavedConfig] = useState(false);
   const [pastedUrl, setPastedUrl] = useState("");
+  const [apiKeyInput, setApiKeyInput] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [landingNotice, setLandingNotice] = useState<ZosmaNotice | null>(noticeProp ?? null);
   const { phase, error, start, cancel, reset, submitManual } = useZosmaAuth({
@@ -3278,6 +3433,19 @@ export function ZosmaAuthCard({ onRefresh, notice: noticeProp }: Props) {
     }
     onRefresh();
     void loadStatus();
+  };
+
+  const saveApiKey = async () => {
+    const res = await fetch("/api/auth/zosma/api-key", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ apiKey: apiKeyInput }),
+    });
+    if (res.ok) {
+      setApiKeyInput("");
+      void loadStatus();
+      onRefresh();
+    }
   };
 
   return (
@@ -3441,6 +3609,31 @@ export function ZosmaAuthCard({ onRefresh, notice: noticeProp }: Props) {
                 Save
               </button>
               {savedConfig && <span style={{ fontSize: 12, color: "var(--text-muted)" }}>Saved</span>}
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input
+                type="password"
+                value={apiKeyInput}
+                onChange={(e) => setApiKeyInput(e.target.value)}
+                placeholder="Paste router key (sk-…)"
+                style={fieldStyle}
+              />
+              <button
+                type="button"
+                onClick={() => void saveApiKey()}
+                style={{
+                  padding: "6px 12px",
+                  borderRadius: 6,
+                  border: "none",
+                  background: "var(--accent)",
+                  color: "#fff",
+                  fontSize: 12,
+                  cursor: "pointer",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                Use key
+              </button>
             </div>
           </div>
         )}
@@ -3844,4 +4037,4 @@ PR body (draft at `/tmp/pr-body-zosma-auth.md` before pushing): what (journey re
 2. **Placeholder scan:** no TBDs; every code step has full code. The two "probe first" steps (T0 auth server behavior, T6 `ModelRuntime` shape) are explicit discovery steps with decision tables, not deferred implementation.
 3. **Type consistency:** `ZosmaAuthDeps.getAvailable(providerId) => Promise<Array<{id, provider}>>` used identically in T5–T9; `ZOSMA_PROVIDER_ID` ("zosma-router") is a single source in `models-json.ts`; `CompleteAuthResult` shape identical between lib (T6), complete route (T9), callback (T9), and hook (T10).
 4. **Known risk:** `runtime.getProvider(id).models` field shape — de-risked by the live probe in Task 6 Step 1 before implementation; adjust `productionDeps` if the probe disagrees.
-5. **Review pass (plan-document-reviewer, 2026-08-26):** issues found and fixed — (1) callback now bounces to `/` with `?zosma=...` and Task 11B wires AppShell → SettingsShell → ModelsContent → ModelsConfig so the Models panel opens on landing (no `/models` route exists); (2) `lucide-react` dropped entirely — card uses inline SVG + `animate-spin` (AppShell idiom), so the only new npm dep is `@tauri-apps/plugin-deep-link`; (3) card restyled to the app's inline-style + globals.css token idiom (no shadcn token utilities exist in this app); (4) route-test helper import corrected to `../test-helper.mjs`; (5) Tauri deep-link merges into the existing `plugins` object (minified single-line JSON); (6) `invoke_handler` added to the thin shell (it had no commands); (7) test counts corrected (54 lib / 11 hook / 3 card); (8) existing `initial-navigation` whole-object `deepEqual` expectations updated for the new field; (9) callback route uses a plain 302 `Response` (not `NextResponse`) so unit tests run under plain node + jiti without `next/server` runtime concerns.
+5. **Review pass (plan-document-reviewer, 2026-08-26):** issues found and fixed — (1) callback now bounces to `/` with `?zosma=...` and Task 11B wires AppShell → SettingsShell → ModelsContent → ModelsConfig so the Models panel opens on landing (no `/models` route exists); (2) `lucide-react` dropped entirely — card uses inline SVG + `animate-spin` (AppShell idiom), so the only new npm dep is `@tauri-apps/plugin-deep-link`; (3) card restyled to the app's inline-style + globals.css token idiom (no shadcn token utilities exist in this app); (4) route-test helper import corrected to `../test-helper.mjs`; (5) Tauri deep-link merges into the existing `plugins` object (minified single-line JSON); (6) `invoke_handler` added to the thin shell (it had no commands); (7) test counts corrected (54 lib / 11 hook / 3 card); (8) existing `initial-navigation` whole-object `deepEqual` expectations updated for the new field; (9) callback route uses a plain 302 `Response` (not `NextResponse`) so unit tests run under plain node + jiti without `next/server` runtime concerns. (10) Task 0 live probe recorded in-plan: production `router.zosma.ai` is a LiteLLM proxy with **no** `/v1/cowork/*` endpoints (the dev router — `localhost:3000` per this machine's `zosma-router-config.json` — has them); added the key-paste degraded path (`authenticateWithKey` lib fn + `api-key` route + card field) that works against production today; shared `saveCatalogAndVerify` save→reload→verify→rollback tail extracted in Task 6 so all three flows (PKCE complete / refresh / api-key) use one rollback guarantee.
