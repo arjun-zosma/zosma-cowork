@@ -2773,7 +2773,7 @@ export async function GET(req: Request) {
     return bounce("success", { models: String(result.modelCount) });
   } catch (err) {
     const message = err instanceof Error ? err.message : "failed to complete sign-in";
-    return bounce("error", { message: encodeURIComponent(message) });
+    return bounce("error", { message });
   }
 }
 ```
