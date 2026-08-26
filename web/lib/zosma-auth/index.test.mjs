@@ -10,7 +10,7 @@ const jiti = createJiti(import.meta.url, {
   interopDefault: true,
   moduleCache: false,
 });
-const { startZosmaAuth, ZOSMA_CLIENT_ID, completeZosmaAuth } = await jiti.import("./index.ts");
+const { startZosmaAuth, ZOSMA_CLIENT_ID, completeZosmaAuth, disconnectZosmaAuth, cancelZosmaAuth, refreshZosmaModels, getZosmaStatus, authenticateWithKey } = await jiti.import("./index.ts");
 const stateModule = await jiti.import("./state.ts");
 
 function withPiDir(run) {
@@ -219,4 +219,139 @@ test("completeZosmaAuth: verify failure with no previous provider deletes the ne
   await assert.rejects(() => completeZosmaAuth("code1", "s1", dir, deps), /not found in registry/);
   const models = JSON.parse(await readFile(join(dir, "models.json"), "utf-8"));
   assert.equal(models.providers["zosma-router"], undefined);
+}));
+
+test("disconnectZosmaAuth revokes server-side, deletes provider, reloads", withPiDir(async (dir) => {
+  const { writeFile } = await import("node:fs/promises");
+  await writeFile(join(dir, "models.json"), JSON.stringify({
+    providers: { "zosma-router": { id: "zosma-router", name: "Z", baseUrl: "https://router.zosma.ai/v1", apiKey: "sk-live", api: "openai-completions", models: [] } },
+  }));
+  const revokeCalls = [];
+  const deps = {
+    reload: async () => {},
+    getAvailable: async () => [],
+    fetch: stubFetch(async (url, init) => {
+      revokeCalls.push([url, init.headers.Authorization]);
+      return new Response("ok", { status: 200 });
+    }),
+  };
+  await disconnectZosmaAuth(dir, deps);
+  assert.equal(revokeCalls.length, 1);
+  assert.match(revokeCalls[0][0], /\/v1\/cowork\/revoke$/);
+  assert.equal(revokeCalls[0][1], "Bearer sk-live");
+  const models = JSON.parse(await readFile(join(dir, "models.json"), "utf-8"));
+  assert.equal(models.providers["zosma-router"], undefined);
+}));
+
+test("disconnectZosmaAuth proceeds locally when the revoke call fails", withPiDir(async (dir) => {
+  const { writeFile } = await import("node:fs/promises");
+  await writeFile(join(dir, "models.json"), JSON.stringify({
+    providers: { "zosma-router": { id: "zosma-router", apiKey: "sk-live", models: [] } },
+  }));
+  const deps = {
+    reload: async () => {},
+    getAvailable: async () => [],
+    fetch: stubFetch(async () => new Response("boom", { status: 500 })),
+  };
+  await disconnectZosmaAuth(dir, deps); // must not throw
+  const models = JSON.parse(await readFile(join(dir, "models.json"), "utf-8"));
+  assert.equal(models.providers["zosma-router"], undefined);
+}));
+
+test("cancelZosmaAuth deletes the pending tx only", withPiDir(async (dir) => {
+  seedPending(dir);
+  const { writeFile } = await import("node:fs/promises");
+  await writeFile(join(dir, "models.json"), JSON.stringify({
+    providers: { "zosma-router": { id: "zosma-router", apiKey: "sk-live", models: [] } },
+  }));
+  await cancelZosmaAuth(dir);
+  assert.equal(await fileExists(join(dir, "zosma-auth-pending.json")), false);
+  const models = JSON.parse(await readFile(join(dir, "models.json"), "utf-8"));
+  assert.ok(models.providers["zosma-router"]); // provider untouched
+}));
+
+test("refreshZosmaModels re-fetches the catalog with the existing key", withPiDir(async (dir) => {
+  const { writeFile } = await import("node:fs/promises");
+  await writeFile(join(dir, "models.json"), JSON.stringify({
+    providers: { "zosma-router": { id: "zosma-router", name: "Z", baseUrl: "https://router.zosma.ai/v1", apiKey: "sk-live", api: "openai-completions", models: [{ id: "old" }] } },
+  }));
+  const deps = {
+    reload: async () => {},
+    getAvailable: async (pid) => [{ id: "new-1", provider: pid }],
+    fetch: stubFetch(async (url) => {
+      if (!url.endsWith("/v1/models")) throw new Error(`unexpected ${url}`);
+      return Response.json({ data: [{ id: "new-1", display_name: "New 1" }] });
+    }),
+  };
+  const res = await refreshZosmaModels(dir, deps);
+  assert.deepEqual(res, { modelCount: 1, selectedModelId: "new-1" });
+  const models = JSON.parse(await readFile(join(dir, "models.json"), "utf-8"));
+  assert.equal(models.providers["zosma-router"].apiKey, "sk-live"); // key unchanged
+  assert.equal(models.providers["zosma-router"].models.length, 1);
+  assert.equal(models.providers["zosma-router"].models[0].id, "new-1");
+}));
+
+test("refreshZosmaModels throws when not configured", withPiDir(async (dir) => {
+  const deps = {
+    reload: async () => {},
+    getAvailable: async () => [],
+    fetch: stubFetch(async () => Response.json({ data: [] })),
+  };
+  await assert.rejects(() => refreshZosmaModels(dir, deps), /not configured/);
+}));
+
+test("getZosmaStatus reports configured/pending/model count", withPiDir(async (dir) => {
+  seedPending(dir);
+  const { writeFile } = await import("node:fs/promises");
+  await writeFile(join(dir, "models.json"), JSON.stringify({
+    providers: { "zosma-router": { id: "zosma-router", baseUrl: "https://router.zosma.ai/v1", apiKey: "sk", models: [{ id: "a" }, { id: "b" }] } },
+  }));
+  const status = getZosmaStatus(dir);
+  assert.equal(status.configured, true);
+  assert.equal(status.pending, true);
+  assert.equal(status.modelCount, 2);
+  assert.equal(status.baseUrl, "https://router.zosma.ai/v1");
+  assert.equal(status.authBaseUrl, "https://router.zosma.ai");
+}));
+
+test("getZosmaStatus is clean when nothing is set up", withPiDir(async (dir) => {
+  const status = getZosmaStatus(dir);
+  assert.deepEqual(status, {
+    configured: false,
+    pending: false,
+    modelCount: 0,
+    baseUrl: null,
+    authBaseUrl: "https://router.zosma.ai",
+    routerBaseUrl: "https://router.zosma.ai/v1",
+  });
+}));
+
+test("authenticateWithKey saves a fresh key and its catalog", withPiDir(async (dir) => {
+  const deps = {
+    reload: async () => {},
+    getAvailable: async (pid) => [{ id: "k1", provider: pid }],
+    fetch: stubFetch(async (url) => {
+      if (!String(url).endsWith("/v1/models")) throw new Error(`unexpected ${url}`);
+      return Response.json({ data: [{ id: "k1", display_name: "K1" }] });
+    }),
+  };
+  const res = await authenticateWithKey("  sk-pasted  ", dir, deps);
+  assert.deepEqual(res, { providerId: "zosma-router", selectedModelId: "k1", modelCount: 1 });
+  const models = JSON.parse(await readFile(join(dir, "models.json"), "utf-8"));
+  assert.equal(models.providers["zosma-router"].apiKey, "sk-pasted");
+}));
+
+test("authenticateWithKey rolls back on verification failure", withPiDir(async (dir) => {
+  const { writeFile } = await import("node:fs/promises");
+  await writeFile(join(dir, "models.json"), JSON.stringify({
+    providers: { "zosma-router": { id: "zosma-router", name: "Old", apiKey: "sk-old", models: [] } },
+  }));
+  const deps = {
+    reload: async () => {},
+    getAvailable: async () => [],
+    fetch: stubFetch(async () => Response.json({ data: [{ id: "k1" }] })),
+  };
+  await assert.rejects(() => authenticateWithKey("sk-new", dir, deps), /not found in registry/);
+  const models = JSON.parse(await readFile(join(dir, "models.json"), "utf-8"));
+  assert.equal(models.providers["zosma-router"].apiKey, "sk-old");
 }));

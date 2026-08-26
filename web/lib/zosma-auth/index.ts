@@ -23,11 +23,12 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { dirname, join } from "node:path";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { invalidateModelsCache } from "../models-cache";
 import { generateCodeVerifier, generateState, sha256Base64url } from "./crypto";
 import { deletePending, loadPending, savePending } from "./state";
 import { resolveRouterConfig } from "./router-config";
-import { ZOSMA_PROVIDER_ID, readProviderEntry, restoreProvider, snapshotProvider, upsertProvider } from "./models-json";
+import { ZOSMA_PROVIDER_ID, deleteProvider, readProviderEntry, restoreProvider, snapshotProvider, upsertProvider } from "./models-json";
 
 export const ZOSMA_CLIENT_ID = "zosma-cowork";
 export const DEVICE_ID_FILE = "zosma-device-id.txt";
@@ -337,4 +338,166 @@ export async function completeZosmaAuth(
   const result = await saveCatalogAndVerify(models, routerKey, piDir, deps, "Zosma AI", "openai-completions");
   deletePending(piDir);
   return result;
+}
+
+/**
+ * Test seam: route unit tests override production deps (ModelRuntime +
+ * network) without touching the real agent dir. Production code never
+ * sets this global.
+ */
+declare global {
+  var __zosmaAuthDepsForTests: ZosmaAuthDeps | undefined;
+}
+
+/**
+ * Production dependency wiring: web models-cache invalidation + live
+ * ModelRuntime reads.
+ */
+export function productionDeps(): ZosmaAuthDeps {
+  return {
+    reload: async () => {
+      invalidateModelsCache();
+    },
+    getAvailable: async (providerId) => {
+      const runtime = await ModelRuntime.create();
+      const provider = runtime.getProvider(providerId);
+      if (!provider) return [];
+      // Probed 2026-08-26: provider exposes getModels(), not a models array.
+      const models = provider.getModels?.() ?? [];
+      return models.map((m) => ({ id: m.id, provider: providerId }));
+    },
+  };
+}
+
+/**
+ * Deps to use at runtime: test override if present, else production.
+ */
+export function resolveDeps(): ZosmaAuthDeps {
+  return globalThis.__zosmaAuthDepsForTests ?? productionDeps();
+}
+
+/**
+ * Disconnect: best-effort server-side revoke, local provider removal, reload.
+ * Revoke failures never block the local disconnect.
+ */
+export async function disconnectZosmaAuth(piDir: string, deps: ZosmaAuthDeps): Promise<void> {
+  const config = resolveRouterConfig(piDir);
+  const modelsPath = join(piDir, "models.json");
+  const provider = readProviderEntry(modelsPath, ZOSMA_PROVIDER_ID);
+
+  if (provider?.apiKey) {
+    try {
+      const res = await fetchImpl(deps)(`${config.authBaseUrl}/v1/cowork/revoke`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${provider.apiKey}` },
+        redirect: "error",
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      });
+      if (!res.ok) {
+        console.warn(`[zosma-auth] server revoke returned ${res.status}; proceeding locally`);
+      }
+    } catch {
+      console.warn("[zosma-auth] server revoke failed; proceeding locally");
+    }
+  }
+
+  deleteProvider(modelsPath, ZOSMA_PROVIDER_ID);
+  await deps.reload();
+}
+
+/**
+ * Cancel an in-progress flow: deletes the pending PKCE transaction only.
+ * Never touches the configured provider.
+ */
+export async function cancelZosmaAuth(piDir: string): Promise<void> {
+  deletePending(piDir);
+}
+
+/**
+ * Refresh the model catalog with the existing key (no key rotation).
+ */
+export async function refreshZosmaModels(
+  piDir: string,
+  deps: ZosmaAuthDeps,
+): Promise<{ modelCount: number; selectedModelId: string }> {
+  const config = resolveRouterConfig(piDir);
+  const modelsPath = join(piDir, "models.json");
+  const provider = readProviderEntry(modelsPath, ZOSMA_PROVIDER_ID);
+  if (!provider?.apiKey) throw new Error("Zosma Router is not configured");
+
+  const modelsRes = await fetchImpl(deps)(`${config.authBaseUrl}/v1/models`, {
+    headers: { Authorization: `Bearer ${provider.apiKey}` },
+    redirect: "error",
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  if (!modelsRes.ok) throw new Error(`model catalog returned ${modelsRes.status}`);
+
+  const catalogBody = (await modelsRes.json()) as { data?: unknown[] };
+  const rows = (catalogBody.data ?? []) as Array<Record<string, unknown>>;
+  if (rows.length === 0) throw new Error("no models entitled for this account");
+
+  const models = mapCatalogRows(rows);
+  const result = await saveCatalogAndVerify(
+    models,
+    provider.apiKey,
+    piDir,
+    deps,
+    provider.name ?? "Zosma AI",
+    provider.api ?? "openai-completions",
+  );
+  return { modelCount: result.modelCount, selectedModelId: result.selectedModelId };
+}
+
+/**
+ * Degraded sign-in for environments where the PKCE endpoints are not
+ * deployed (Task 0 finding: production LiteLLM proxy has no /v1/cowork/*):
+ * take a router key directly, fetch the catalog with it, save + verify.
+ */
+export async function authenticateWithKey(
+  apiKey: string,
+  piDir: string,
+  deps: ZosmaAuthDeps,
+): Promise<CompleteAuthResult> {
+  const config = resolveRouterConfig(piDir);
+  const key = apiKey.trim();
+  if (!key) throw new Error("missing API key");
+
+  const modelsRes = await fetchImpl(deps)(`${config.authBaseUrl}/v1/models`, {
+    headers: { Authorization: `Bearer ${key}` },
+    redirect: "error",
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  if (!modelsRes.ok) throw new Error(`model catalog returned ${modelsRes.status}`);
+
+  const catalogBody = (await modelsRes.json()) as { data?: unknown[] };
+  const rows = (catalogBody.data ?? []) as Array<Record<string, unknown>>;
+  if (rows.length === 0) throw new Error("no models entitled for this account");
+
+  const models = mapCatalogRows(rows);
+  const existing = readProviderEntry(join(piDir, "models.json"), ZOSMA_PROVIDER_ID);
+  return saveCatalogAndVerify(
+    models,
+    key,
+    piDir,
+    deps,
+    existing?.name ?? "Zosma AI",
+    existing?.api ?? "openai-completions",
+  );
+}
+
+/**
+ * Read-only status for the UI: is the provider configured, is a sign-in
+ * in flight, how many models, which base URLs are effective.
+ */
+export function getZosmaStatus(piDir: string): ZosmaStatus {
+  const config = resolveRouterConfig(piDir);
+  const provider = readProviderEntry(join(piDir, "models.json"), ZOSMA_PROVIDER_ID);
+  return {
+    configured: Boolean(provider),
+    pending: Boolean(loadPending(piDir)),
+    modelCount: provider?.models?.length ?? 0,
+    baseUrl: provider?.baseUrl ?? null,
+    authBaseUrl: config.authBaseUrl,
+    routerBaseUrl: config.routerBaseUrl,
+  };
 }

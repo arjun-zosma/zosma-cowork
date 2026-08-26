@@ -1822,7 +1822,7 @@ test("authenticateWithKey rolls back on verification failure", withPiDir(async (
 - [ ] **Step 2: Watch it fail**
 
 Run: `cd web && node --experimental-strip-types --test lib/zosma-auth/index.test.mjs`
-Expected: the 6 new tests FAIL (`not a function`); the previous 14 pass.
+Expected: the 9 new tests FAIL (`not a function`); the previous 14 pass.
 
 - [ ] **Step 3: Implement**
 
@@ -2009,7 +2009,7 @@ Expected: 20 pass, 0 fail.
 - [ ] **Step 5: Run the whole zosma-auth lib suite**
 
 Run: `cd web && node --experimental-strip-types --test "lib/zosma-auth/*.test.mjs"`
-Expected: all pass (56 tests across 5 files: 7+9+10+8+22).
+Expected: all pass (57 tests across 5 files: 7+9+10+8+23).
 
 - [ ] **Step 6: Commit**
 
