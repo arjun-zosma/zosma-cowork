@@ -2999,7 +2999,7 @@ export interface UseZosmaAuthOptions {
 }
 
 export function isTauri(win: Window | Record<string, unknown>): boolean {
-  return Boolean((win as Window).__TAURI_INTERNALS__);
+  return Boolean((win as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
 }
 
 export interface ParsedCallback {
