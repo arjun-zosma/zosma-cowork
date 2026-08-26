@@ -704,8 +704,8 @@ function validateBaseUrl(name: string, value: string, pathname: string): string 
 }
 
 export function validateRouterConfig(config: RouterConfig): RouterConfig {
-  const auth = validateBaseUrl("ZOSMA_AUTH_BASE_URL", config.authBaseUrl, "/");
-  const router = validateBaseUrl("ZOSMA_ROUTER_BASE_URL", config.routerBaseUrl, "/v1");
+  const auth = validateBaseUrl("authBaseUrl", config.authBaseUrl, "/");
+  const router = validateBaseUrl("routerBaseUrl", config.routerBaseUrl, "/v1");
   const authUrl = new URL(auth);
   const routerUrl = new URL(router);
   if (authUrl.protocol !== routerUrl.protocol) {
