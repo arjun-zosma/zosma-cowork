@@ -308,13 +308,15 @@ const jiti = createJiti(import.meta.url, {
 const { savePending, loadPending, deletePending, pendingFilePath } =
   await jiti.import("./state.ts");
 
-async function withTempDir(run) {
-  const dir = await mkdtemp(join(tmpdir(), "zosma-auth-pending-"));
-  try {
-    await run(dir);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
+function withTempDir(run) {
+  return async () => {
+    const dir = await mkdtemp(join(tmpdir(), "zosma-auth-pending-"));
+    try {
+      await run(dir);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  };
 }
 
 const tx = (over = {}) => ({
@@ -326,8 +328,9 @@ const tx = (over = {}) => ({
 });
 
 test("savePending then loadPending roundtrips", withTempDir(async (dir) => {
-  savePending(tx(), dir);
-  assert.deepEqual(loadPending(dir), tx());
+  const t = tx();
+  savePending(t, dir);
+  assert.deepEqual(loadPending(dir), t);
 }));
 
 test("loadPending returns null when no file exists", withTempDir(async (dir) => {
