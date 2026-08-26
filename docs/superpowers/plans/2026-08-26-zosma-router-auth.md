@@ -1287,6 +1287,9 @@ export async function startZosmaAuth(
 export function zosmaPiDir(): string {
   return getAgentDir();
 }
+
+// Facade re-export (routes import config ops from @/lib/zosma-auth).
+export { saveRouterConfig } from "./router-config";
 ```
 
 - [ ] **Step 4: Watch it pass**
@@ -2360,18 +2363,21 @@ export const dynamic = "force-dynamic";
 export async function PUT(req: Request) {
   let body: { authBaseUrl?: string; routerBaseUrl?: string };
   try {
-    body = await req.json();
+    body = (await req.json()) as { authBaseUrl?: string; routerBaseUrl?: string };
   } catch {
     return Response.json({ error: "JSON body required" }, { status: 400 });
   }
-  if (!body?.authBaseUrl || !body?.routerBaseUrl) {
+  if (typeof body?.authBaseUrl !== "string" || typeof body?.routerBaseUrl !== "string") {
     return Response.json(
       { error: "authBaseUrl and routerBaseUrl are required" },
       { status: 400 },
     );
   }
   try {
-    const saved = saveRouterConfig(zosmaPiDir(), body);
+    const saved = saveRouterConfig(zosmaPiDir(), {
+      authBaseUrl: body.authBaseUrl,
+      routerBaseUrl: body.routerBaseUrl,
+    });
     return Response.json(saved);
   } catch (err) {
     const message = err instanceof Error ? err.message : "invalid configuration";

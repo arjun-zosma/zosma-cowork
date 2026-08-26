@@ -159,6 +159,9 @@ export function zosmaPiDir(): string {
   return getAgentDir();
 }
 
+// Facade re-export (routes import config ops from @/lib/zosma-auth).
+export { saveRouterConfig } from "./router-config";
+
 type ModelInput = "text" | "image";
 
 interface MappedModel {
