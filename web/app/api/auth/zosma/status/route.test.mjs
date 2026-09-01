@@ -18,7 +18,7 @@ test("GET /status reports an unconfigured default state", withAgentDir(async () 
   const body = await res.json();
   assert.equal(body.configured, false);
   assert.equal(body.modelCount, 0);
-  assert.equal(body.authBaseUrl, "https://router.zosma.ai");
+  assert.equal(body.authBaseUrl, "https://auth.zosma.ai");
   assert.equal(body.routerBaseUrl, "https://router.zosma.ai/v1");
 }));
 

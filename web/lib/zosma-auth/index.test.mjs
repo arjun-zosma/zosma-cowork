@@ -53,7 +53,7 @@ test("startZosmaAuth persists pending tx + device id before the network call", w
   });
   await startZosmaAuth(dir, { fetch });
   assert.equal(calls.length, 1);
-  assert.match(calls[0], /^https:\/\/router\.zosma\.ai\/v1\/cowork\/authorizations$/);
+  assert.match(calls[0], /^https:\/\/auth\.zosma\.ai\/v1\/cowork\/authorizations$/);
   const deviceId = (await readFile(join(dir, "zosma-device-id.txt"), "utf-8")).trim();
   assert.match(deviceId, /^cowork-[0-9a-f]{32}$/);
 }));
@@ -311,7 +311,7 @@ test("getZosmaStatus reports configured/pending/model count", withPiDir(async (d
   assert.equal(status.pending, true);
   assert.equal(status.modelCount, 2);
   assert.equal(status.baseUrl, "https://router.zosma.ai/v1");
-  assert.equal(status.authBaseUrl, "https://router.zosma.ai");
+  assert.equal(status.authBaseUrl, "https://auth.zosma.ai");
 }));
 
 test("getZosmaStatus is clean when nothing is set up", withPiDir(async (dir) => {
@@ -321,7 +321,7 @@ test("getZosmaStatus is clean when nothing is set up", withPiDir(async (dir) => 
     pending: false,
     modelCount: 0,
     baseUrl: null,
-    authBaseUrl: "https://router.zosma.ai",
+    authBaseUrl: "https://auth.zosma.ai",
     routerBaseUrl: "https://router.zosma.ai/v1",
   });
 }));

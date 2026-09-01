@@ -20,7 +20,7 @@ test("POST /start returns the authorizationUrl from the auth server", withAgentD
   assert.deepEqual(await res.json(), { authorizationUrl: "https://stub.example/authorize?state=x" });
 }));
 
-test("POST /start forwards redirectUri to the auth server", withAgentDir(async (_dir, t) => {
+test("POST /start does not forward redirectUri (auth server rejects unexpected fields)", withAgentDir(async (_dir, t) => {
   let seenBody;
   const realFetch = globalThis.fetch;
   globalThis.fetch = async (_url, init) => {
@@ -36,7 +36,8 @@ test("POST /start forwards redirectUri to the auth server", withAgentDir(async (
     }),
   );
   assert.equal(res.status, 200);
-  assert.equal(seenBody.redirect_uri, "http://127.0.0.1:30141/api/auth/zosma/callback");
+  assert.equal(seenBody.redirect_uri, undefined);
+  assert.equal(seenBody.redirectUri, undefined);
 }));
 
 test("POST /start maps auth server errors to 502 with a message", withAgentDir(async (_dir, t) => {

@@ -95,7 +95,7 @@ jobs:
         # ../web/dist-server/**/* — build it so compile-time resource
         # validation passes (same commands as beforeBuildCommand).
         run: |
-          pnpm -C web install --frozen-lockfile --no-audit
+          pnpm -C web install --frozen-lockfile
           pnpm -C web build
           pnpm -C web package-server
 

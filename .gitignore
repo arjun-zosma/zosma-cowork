@@ -23,6 +23,9 @@ web/dist-server/
 .env.local
 .zosma-google.env
 .pi/
+!web/.pi/
+!web/.pi/extensions/
+!web/.pi/extensions/zosma-ui-audit.ts
 .llm-wiki/
 .obsidian/
 .worktrees/
