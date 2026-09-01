@@ -129,8 +129,6 @@ export async function startZosmaAuth(
     code_challenge_method: "S256",
     device_id: deviceId,
   };
-  if (opts.redirectUri) body.redirect_uri = opts.redirectUri;
-
   const res = await fetchImpl(deps)(`${config.authBaseUrl}/v1/cowork/authorizations`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -465,7 +463,9 @@ export async function authenticateWithKey(
   const key = apiKey.trim();
   if (!key) throw new Error("missing API key");
 
-  const modelsRes = await fetchImpl(deps)(`${config.authBaseUrl}/v1/models`, {
+  // Manual key is a raw router key (sk-...), so validate against the router (LiteLLM) host.
+  // The auth host's /v1/models only accepts cowork device keys and returns device_key_invalid for raw keys.
+  const modelsRes = await fetchImpl(deps)(`${config.routerBaseUrl}/models`, {
     headers: { Authorization: `Bearer ${key}` },
     redirect: "error",
     signal: AbortSignal.timeout(TIMEOUT_MS),

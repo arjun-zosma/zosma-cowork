@@ -15,12 +15,19 @@ FROM node:22-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=30141
+ENV HOSTNAME=0.0.0.0
 ENV PI_WEB_HOSTNAME=0.0.0.0
 ENV PI_CODING_AGENT_DIR=/data/pi-agent
-# On disk (verified 2026-09-01): .next/standalone/server.js at standalone root, not web/server.js
+ENV HOME=/home/user
+RUN mkdir -p /home/user/workspace /home/user/Documents /home/user/Downloads \
+  && echo "# Workspace" > /home/user/workspace/README.md \
+  && echo "Welcome to Zosma Sandbox - your home is /home/user" > /home/user/README.md \
+  && chmod -R 777 /home/user
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
+# Fix standalone tracing miss: pi-coding-agent loads theme JSON dynamically
+COPY --from=builder /app/node_modules/@earendil-works/pi-coding-agent/dist/modes ./node_modules/@earendil-works/pi-coding-agent/dist/modes
 EXPOSE 30141
 HEALTHCHECK --interval=10s --timeout=3s --retries=10 CMD wget -qO- http://127.0.0.1:30141/api/agent/running || exit 1
 CMD ["node", "server.js"]
