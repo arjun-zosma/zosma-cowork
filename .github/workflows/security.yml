@@ -60,7 +60,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo install cargo-audit
+      - run: cargo install cargo-audit --locked
       # Workspace lockfile lives at the repo root after the workspace migration
       # (Agent sidecar uses pi-mono SDK).
       - run: cargo audit
