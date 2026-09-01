@@ -109,7 +109,8 @@ export function loadDeviceId(piDir: string): string {
 export async function startZosmaAuth(
   piDir: string,
   deps: ZosmaAuthDeps,
-  opts: { redirectUri?: string } = {},
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _opts: { redirectUri?: string } = {},
 ): Promise<StartAuthResult> {
   const config = resolveRouterConfig(piDir);
   const state = generateState();
