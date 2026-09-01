@@ -77,4 +77,6 @@ jobs:
       - uses: github/codeql-action/init@v3
         with:
           languages: typescript, rust
+          config-file: ./.github/codeql/codeql-config.yml
       - uses: github/codeql-action/analyze@v3
+
