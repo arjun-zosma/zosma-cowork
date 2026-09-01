@@ -43,6 +43,7 @@
     "@earendil-works/pi-ai": "0.84.2",
     "@earendil-works/pi-coding-agent": "0.84.2",
     "@earendil-works/pi-tui": "0.84.2",
+    "@tauri-apps/plugin-deep-link": "^2.4.9",
     "clsx": "^2.1.1",
     "js-yaml": "^5.2.3",
     "next": "16.3.1",

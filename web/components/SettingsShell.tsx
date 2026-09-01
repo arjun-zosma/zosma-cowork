@@ -5,6 +5,7 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/hooks/useI18n";
 import { useTheme } from "@/hooks/useTheme";
 import { ModelsContent, PluginsContent, SkillsContent } from "./SettingsContent";
+import type { ZosmaNotice } from "./ZosmaAuthCard";
 
 export type SettingsCategory =
   | "models"
@@ -21,6 +22,7 @@ interface SettingsShellProps {
   onReloaded?: () => void;
   onModelsRefresh?: () => void;
   initialCategory?: SettingsCategory;
+  zosmaNotice?: ZosmaNotice | null;
 }
 
 const CATEGORIES: { id: SettingsCategory; icon: React.ReactNode }[] = [
@@ -196,6 +198,7 @@ export function SettingsShell({
   onReloaded,
   onModelsRefresh,
   initialCategory = "models",
+  zosmaNotice,
 }: SettingsShellProps) {
   const isMobile = useIsMobile();
   const { t } = useI18n();
@@ -273,7 +276,7 @@ export function SettingsShell({
   const renderContent = () => {
     switch (activeCategory) {
       case "models":
-        return <ModelsContent onClose={handleClose} />;
+        return <ModelsContent onClose={handleClose} zosmaNotice={zosmaNotice} />;
       case "plugins":
         return (
           <PluginsContent

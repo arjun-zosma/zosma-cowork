@@ -86,6 +86,32 @@ $env:NO_PROXY = "localhost,127.0.0.1"
 npx @agegr/pi-web@latest
 ```
 
+## Dual Install
+
+### 1. Direct (native)
+Requires Node >=22.19.0.
+```bash
+cd web
+pnpm install
+pnpm dev          # loopback only → http://127.0.0.1:30141
+# or
+pnpm dev:lan      # LAN → http://<lan-ip>:30141  (needs: sudo ufw allow 30141/tcp)
+pnpm build && pnpm start:lan  # production
+```
+Pi state: `~/.pi/agent` (or `$PI_CODING_AGENT_DIR`).
+
+### 2. Docker sandbox (isolated, fresh each time)
+```bash
+cd web
+./scripts/docker-sandbox.sh up      # build + run → http://<lan-ip>:30141
+./scripts/docker-sandbox.sh logs    # follow
+./scripts/docker-sandbox.sh fresh   # wipe pi state + restart (fresh install)
+./scripts/docker-sandbox.sh down    # stop
+# optional LAN password:
+PI_WEB_PASSWORD='long-random' ./scripts/docker-sandbox.sh up
+```
+Pi state: Docker volume `pi-data` at `/data/pi-agent` (`down -v` wipes it).
+
 ## Notes
 
 - **Agent data**: Pi Web reads pi data from `~/.pi/agent` by default, including session files under `sessions/<encoded-cwd>/<timestamp>_<uuid>.jsonl`. Set `PI_CODING_AGENT_DIR` to use another pi agent directory.

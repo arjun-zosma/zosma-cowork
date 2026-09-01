@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/hooks/useI18n";
+import { ZosmaAuthCard, type ZosmaNotice } from "@/components/ZosmaAuthCard";
 import type { ModelCatalogPreset, ModelCatalogRecommendation } from "@/lib/model-catalog";
 import type { DiscoveredModel } from "@/lib/model-discovery";
 import {
@@ -1891,7 +1892,13 @@ function AddProviderPicker({
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function ModelsConfig({ onClose }: { onClose: () => void }) {
+export function ModelsConfig({
+  onClose,
+  zosmaNotice,
+}: {
+  onClose: () => void;
+  zosmaNotice?: ZosmaNotice | null;
+}) {
   const isMobile = useIsMobile();
   const { t } = useI18n();
   const [config, setConfig] = useState<ModelsJson>({ providers: {} });
@@ -2159,6 +2166,8 @@ export function ModelsConfig({ onClose }: { onClose: () => void }) {
                   </div>
                 );
               })}
+
+              <ZosmaAuthCard onRefresh={refreshAuthProviders} notice={zosmaNotice} />
 
               {/* Divider before custom providers, only when there are active managed providers */}
               {(activeOAuth.length > 0 || activeApiKey.length > 0) && providers.length > 0 && (
