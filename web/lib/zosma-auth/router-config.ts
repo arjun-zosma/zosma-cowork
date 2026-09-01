@@ -9,7 +9,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-export const DEFAULT_AUTH_BASE_URL = "https://router.zosma.ai";
+export const DEFAULT_AUTH_BASE_URL = "https://auth.zosma.ai";
 export const DEFAULT_ROUTER_BASE_URL = "https://router.zosma.ai/v1";
 export const ROUTER_CONFIG_FILE = "zosma-router-config.json";
 

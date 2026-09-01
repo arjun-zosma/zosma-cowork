@@ -19,8 +19,8 @@ const {
   loadPersistedRouterConfig,
 } = await jiti.import("./router-config.ts");
 
-test("defaults point at router.zosma.ai", () => {
-  assert.equal(DEFAULT_AUTH_BASE_URL, "https://router.zosma.ai");
+test("defaults point at auth/router hosts", () => {
+  assert.equal(DEFAULT_AUTH_BASE_URL, "https://auth.zosma.ai");
   assert.equal(DEFAULT_ROUTER_BASE_URL, "https://router.zosma.ai/v1");
 });
 
